@@ -540,7 +540,36 @@ pub fn key_name(s: &str) -> &str {
 
 /// Translate an English UI string; unknown strings come back unchanged.
 pub fn tr(lang: Lang, s: &str) -> &str {
-    lang.i18n().t(lang.lang, s)
+    branded(lang.i18n().t(lang.lang, s))
+}
+
+/// `text` with the upstream product name replaced by BailanCraft's (`engine::brand`), so every
+/// translated or English UI string names this app without forking the catalogs' keys. The
+/// rewritten strings are kept for the life of the process: there is one per distinct catalog or
+/// source string that names the product (a few dozen), never one per document or keystroke,
+/// because the strings passed here are the English sources and their catalog translations, not
+/// formatted text.
+fn branded(text: &str) -> &str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    /// Upper bound on cached rewrites; past it a string is shown unbranded rather than kept.
+    const MAX_CACHED: usize = 4096;
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    if !text.contains(pdfcraft_engine::brand::UPSTREAM_NAME) {
+        return text;
+    }
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    // A poisoned lock only means another thread panicked mid-insert; the map is still usable.
+    let mut map = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(done) = map.get(text) {
+        return done;
+    }
+    if map.len() >= MAX_CACHED {
+        return text;
+    }
+    let done: &'static str = Box::leak(pdfcraft_engine::brand::rebrand(text).into_owned().into_boxed_str());
+    map.insert(text.to_owned(), done);
+    done
 }
 
 /// How the layers below say their own sentences in the current language.
@@ -556,13 +585,13 @@ pub fn words(wording: &str) -> String {
 
 /// Like [`tr`], for an English string that needs a disambiguating `context`.
 pub fn tr_ctx<'a>(lang: Lang, context: &str, s: &'a str) -> &'a str {
-    lang.i18n().tc(lang.lang, context, s)
+    branded(lang.i18n().tc(lang.lang, context, s))
 }
 
 /// A string keyed by its command id, falling back to the translation of the English `label`. Only
 /// PdfCraft's own `@id` rows count ([`own_id`]).
 pub fn tr_id<'a>(lang: Lang, id: &str, label: &'a str) -> &'a str {
-    if own_id(lang, id, label) { lang.i18n().tid(lang.lang, id, label) } else { tr(lang, label) }
+    if own_id(lang, id, label) { branded(lang.i18n().tid(lang.lang, id, label)) } else { tr(lang, label) }
 }
 
 /// Whether `lang` has PdfCraft's own `@id` row for `id` ([`Lang::has_own`]: command ids are each

@@ -405,11 +405,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("page.number", "Number pages…", PAGES, None, Assembly, "hash"),
     c("page.properties", "Page properties…", PAGES, None, Modification, "info"),
     c("help.shortcuts", "Keyboard shortcuts", HELP, None, Nothing, "circle-help"),
-    c("help.discord", "Join the ArtCraft Discord", HELP, None, Nothing, "messages-square"),
-    c("help.app_page", "PdfCraft web page", HELP, None, Nothing, "globe"),
-    c("help.github", "PdfCraft on GitHub", HELP, None, Nothing, "code-xml"),
-    c("help.website", "ArtCraft website", HELP, None, Nothing, "external-link"),
-    c("help.check_updates", "Check for updates…", HELP, None, Nothing, "cloud"),
+    // BailanCraft keeps only the upstream source link; the ArtCraft Discord, web pages and the
+    // upstream update check are gone (engine::brand). The upstream source link stays as the credit;
+    // its label avoids the word PdfCraft, which the UI rebrands.
+    c("help.github", "Upstream source code (GitHub)", HELP, None, Nothing, "code-xml"),
     c("help.about", "About PdfCraft", HELP, None, Nothing, "info"),
 ];
 

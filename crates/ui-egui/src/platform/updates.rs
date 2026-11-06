@@ -58,6 +58,10 @@ impl PdfCraftApp {
 
     /// Help ▸ Check for updates: ask for the latest release and show the outcome.
     pub fn check_for_updates(&mut self) {
+        // The upstream feed offers PdfCraft releases, not BailanCraft ones (brand::UPDATE_CHECK).
+        if !pdfcraft_engine::brand::UPDATE_CHECK {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.updates.open = true;
@@ -75,9 +79,9 @@ impl PdfCraftApp {
         {
             let Some(ctx) = self.ctx.clone() else { return };
             // Settled on the first frame: a preference turned on later waits for the next start.
-            let at_start = std::mem::take(&mut self.updates.startup_check) && self.update_check_at_start;
+            let at_start = std::mem::take(&mut self.updates.startup_check) && self.update_check_at_start && pdfcraft_engine::brand::UPDATE_CHECK;
             let updates = &mut self.updates;
-            if std::mem::take(&mut updates.check_requested) {
+            if std::mem::take(&mut updates.check_requested) && pdfcraft_engine::brand::UPDATE_CHECK {
                 updates.updater.check_now(&ctx);
             } else if at_start {
                 updates.updater.check_at_start(&ctx);

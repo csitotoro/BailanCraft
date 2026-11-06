@@ -99,11 +99,11 @@ fn clipboard_dir() -> Option<std::path::PathBuf> {
     }
     let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute());
     if cfg!(target_os = "macos") {
-        env("HOME").map(|h| h.join("Library/Caches/PdfCraft/Clipboard"))
+        env("HOME").map(|h| h.join("Library/Caches").join(pdfcraft_engine::brand::DATA_DIR).join("Clipboard"))
     } else if cfg!(windows) {
-        env("LOCALAPPDATA").map(|d| d.join("PdfCraft").join("Clipboard"))
+        env("LOCALAPPDATA").map(|d| d.join(pdfcraft_engine::brand::DATA_DIR).join("Clipboard"))
     } else {
-        env("XDG_CACHE_HOME").or_else(|| env("HOME").map(|h| h.join(".cache"))).map(|d| d.join("pdfcraft/clipboard"))
+        env("XDG_CACHE_HOME").or_else(|| env("HOME").map(|h| h.join(".cache"))).map(|d| d.join(pdfcraft_engine::brand::XDG_DIR).join("clipboard"))
     }
 }
 

@@ -15,6 +15,7 @@
 pub mod actions;
 pub mod autotag;
 mod bookmarks;
+pub mod brand;
 pub mod build_info;
 pub mod camera;
 pub mod camera_clean;

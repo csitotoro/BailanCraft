@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 /// Files beside the executable that switch on portable mode (either one; contents are ignored).
 pub const MARKERS: [&str; 2] = ["portable.txt", "PdfCraft.portable"];
 /// The data folder created beside the executable in portable mode.
-pub const DATA_DIR: &str = "PdfCraftData";
+pub const DATA_DIR: &str = pdfcraft_engine::brand::PORTABLE_DIR;
 
 /// The outcome of looking for a portable marker.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
