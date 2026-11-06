@@ -93,7 +93,10 @@ mod tests {
         let fixture = Fixture::new();
         let home = fixture.0.join("home");
         let data = home.join(".local/share/pdfcraft");
-        assert_eq!(directory(true, None, Some(data), None, Some(home.clone())).unwrap(), Some(home.join(".config/pdfcraft")));
+        assert_eq!(
+            directory(true, None, Some(data), None, Some(home.clone())).unwrap(),
+            Some(home.join(".config").join(pdfcraft_engine::brand::XDG_DIR))
+        );
     }
 
     struct Fixture(PathBuf);
@@ -116,9 +119,15 @@ mod tests {
         let f = Fixture::new();
         let home = f.0.join("home");
         let config = f.0.join("custom-config");
-        assert_eq!(directory(true, None, None, Some(config.clone()), Some(home.clone())).unwrap(), Some(config.join(pdfcraft_engine::brand::XDG_DIR)));
+        assert_eq!(
+            directory(true, None, None, Some(config.clone()), Some(home.clone())).unwrap(),
+            Some(config.join(pdfcraft_engine::brand::XDG_DIR))
+        );
         for invalid in [PathBuf::new(), PathBuf::from("relative")] {
-            assert_eq!(directory(true, None, None, Some(invalid), Some(home.clone())).unwrap(), Some(home.join(".config/pdfcraft")));
+            assert_eq!(
+                directory(true, None, None, Some(invalid), Some(home.clone())).unwrap(),
+                Some(home.join(".config").join(pdfcraft_engine::brand::XDG_DIR))
+            );
         }
         assert_eq!(directory(true, None, Some(f.0.clone()), None, None).unwrap(), Some(f.0.clone()));
     }

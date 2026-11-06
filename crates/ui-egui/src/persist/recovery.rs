@@ -177,7 +177,9 @@ impl RecoveryStore {
         } else if cfg!(windows) {
             env("LOCALAPPDATA").map(|d| d.join(pdfcraft_engine::brand::DATA_DIR).join("Recovery"))
         } else {
-            env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share"))).map(|d| d.join(pdfcraft_engine::brand::XDG_DIR).join("recovery"))
+            env("XDG_DATA_HOME")
+                .or_else(|| env("HOME").map(|h| h.join(".local/share")))
+                .map(|d| d.join(pdfcraft_engine::brand::XDG_DIR).join("recovery"))
         }
     }
 
@@ -200,7 +202,9 @@ pub fn default_dictionary_dir() -> Option<PathBuf> {
     } else if cfg!(windows) {
         env("LOCALAPPDATA").map(|d| d.join(pdfcraft_engine::brand::DATA_DIR).join("Dictionary"))
     } else {
-        env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share"))).map(|d| d.join(pdfcraft_engine::brand::XDG_DIR).join("dictionary"))
+        env("XDG_DATA_HOME")
+            .or_else(|| env("HOME").map(|h| h.join(".local/share")))
+            .map(|d| d.join(pdfcraft_engine::brand::XDG_DIR).join("dictionary"))
     }
 }
 

@@ -50,3 +50,13 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
 - OCR has no Thai (ocrs models are Latin-only; Tesseract allow-list lacks `tha`, `crates/ocr`).
 - Forms and Fill & Sign don't write Thai; `doc_create` from text is WinAnsi-only.
 - Some UI strings have no Thai translation yet (e.g. the update dialog).
+
+## Known test notes (this machine)
+- `pdfcraft` bin: three `single_instance` socket tests fail here (the AF_UNIX socket file is not
+  left behind, hand-off never connects), inside and outside the sandbox. They don't touch fork
+  code. In the real app a second launch opens its own window instead of a tab. Not yet compared
+  with upstream on another machine.
+- `pdfcraft-ui-egui --test it` once died with STATUS_ACCESS_VIOLATION mid-run under load (native
+  code); a rerun passed. Rerun before suspecting a change.
+- Six upstream update-flow tests are `#[ignore]`d because `brand::UPDATE_CHECK` is off;
+  `bailancraft_never_asks_the_upstream_release_feed` covers the fork's behaviour.

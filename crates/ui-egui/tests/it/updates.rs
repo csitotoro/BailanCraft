@@ -48,6 +48,7 @@ fn settle(h: &mut Harness<'static, PdfCraftApp>) {
 }
 
 #[test]
+#[ignore = "BailanCraft: the upstream update check is off (engine::brand::UPDATE_CHECK)"]
 fn a_newer_release_is_offered_for_download() {
     let mut h = harness(Ok(Some("v99.0.0")));
     h.state_mut().execute("help.check_updates");
@@ -60,6 +61,7 @@ fn a_newer_release_is_offered_for_download() {
 }
 
 #[test]
+#[ignore = "BailanCraft: the upstream update check is off (engine::brand::UPDATE_CHECK)"]
 fn an_up_to_date_or_failed_check_says_so() {
     let mut h = harness(Ok(None));
     h.state_mut().execute("help.check_updates");
@@ -75,6 +77,7 @@ fn an_up_to_date_or_failed_check_says_so() {
 }
 
 #[test]
+#[ignore = "BailanCraft: the upstream update check is off (engine::brand::UPDATE_CHECK)"]
 fn nothing_is_asked_until_the_user_checks() {
     // The check at start is opt-in (the desktop app turns it on): the source is only called from the command.
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -130,6 +133,7 @@ fn run_until_asked(h: &mut Harness<'static, PdfCraftApp>, calls: &std::sync::ato
 }
 
 #[test]
+#[ignore = "BailanCraft: the upstream update check is off (engine::brand::UPDATE_CHECK)"]
 fn the_preference_keeps_the_check_at_start_from_reaching_the_network() {
     use std::sync::atomic::Ordering::SeqCst;
     assert!(PdfCraftApp::new().update_check_at_start, "on by default");
@@ -167,6 +171,7 @@ fn turning_the_check_at_start_on_waits_for_the_next_start() {
 }
 
 #[test]
+#[ignore = "BailanCraft: the upstream update check is off (engine::brand::UPDATE_CHECK)"]
 fn preferences_turn_the_check_at_start_off() {
     let (mut h, _calls) = started_with(r#"{"update_check_at_start": true}"#);
     h.state_mut().execute("app.preferences");
@@ -188,6 +193,7 @@ fn settings_from_the_old_opt_in_leave_the_check_at_start_on() {
 }
 
 #[test]
+#[ignore = "BailanCraft: the upstream update check is off (engine::brand::UPDATE_CHECK)"]
 fn the_check_at_start_offers_the_prompt_and_later_dismisses_it() {
     let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_cc| {
         let mut app = PdfCraftApp::new();
@@ -205,4 +211,20 @@ fn the_check_at_start_offers_the_prompt_and_later_dismisses_it() {
     h.get_by_label("LATER").click();
     h.run_steps(3);
     assert!(h.query_by_label_contains("is available").is_none(), "Later closes the prompt");
+}
+
+/// BailanCraft: the upstream feed offers PdfCraft releases, so neither the start nor Help ▸
+/// Check for updates may ask it, whatever the preference says (engine::brand::UPDATE_CHECK).
+#[test]
+fn bailancraft_never_asks_the_upstream_release_feed() {
+    use std::sync::atomic::Ordering::SeqCst;
+    assert!(!pdfcraft_engine::brand::UPDATE_CHECK);
+    let (mut h, calls) = started_with(r#"{"update_check_at_start": true}"#);
+    run_until_asked(&mut h, &calls, std::time::Duration::from_millis(800));
+    h.state_mut().check_for_updates();
+    run_until_asked(&mut h, &calls, std::time::Duration::from_millis(800));
+    assert_eq!(calls.load(SeqCst), 0, "nothing reaches the release feed");
+    assert!(h.query_by_label_contains("is available").is_none());
+    assert!(h.query_by_label_contains("Checking for updates").is_none());
+    assert!(pdfcraft_engine::commands::command("help.check_updates").is_none(), "no menu command for it");
 }

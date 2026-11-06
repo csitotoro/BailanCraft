@@ -241,9 +241,10 @@ fn main() -> eframe::Result {
     // The log file stays in the data folder; opened after the arguments (so `--version` leaves
     // no file behind) and after the PrintCraft migration (which a fresh folder would block).
     // Records logged until now are written to it first.
-    if let (Some(logger), Some(dir)) =
-        (logger, pdfcraft_ui_egui::portable::data_dir().map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir(pdfcraft_engine::brand::DATA_DIR)))
-    {
+    if let (Some(logger), Some(dir)) = (
+        logger,
+        pdfcraft_ui_egui::portable::data_dir().map(std::path::Path::to_path_buf).or_else(|| eframe::storage_dir(pdfcraft_engine::brand::DATA_DIR)),
+    ) {
         match logger.attach_dir(&dir.join("logs")) {
             Ok(path) => log::info!("{} {}, log file {}", pdfcraft_engine::brand::NAME, pdfcraft_engine::build_info::version(), path.display()),
             // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
