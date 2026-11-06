@@ -51,7 +51,11 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   (`crates/ui-egui/src/thai_breaks.rs`). The per-character rule in `text_regions/styled.rs`
   (`linebreak::between`) still can't see Thai words.
 - OCR has no Thai (ocrs models are Latin-only; Tesseract allow-list lacks `tha`, `crates/ocr`).
-- Forms and Fill & Sign don't write Thai; `doc_create` from text is WinAnsi-only.
+- Form field values and text box / Fill & Sign text draw Thai through `pdfcraft_fonts::thai_draw`
+  (shaped clusters in Type 3 fonts `BCTh0…`; builders record lines under `PCThaiLines`, and
+  whoever stores the stream calls `thai_draw::materialize`). Still WinAnsi-only: typed
+  signatures (no Thai script face), stamps, line captions, redaction overlay text, push-button
+  captions, `doc_create` from text, headers/footers and watermarks.
 - Some UI strings have no Thai translation yet (e.g. the update dialog).
 
 ## Known test notes (this machine)

@@ -60,6 +60,9 @@ fn build_appearance(doc: &Document, d: &Dict) -> Option<Stream> {
 fn apply_appearance(doc: &mut Document, r: ObjRef, d: &Dict, stream: Stream) -> Result<(), AnnotError> {
     // Characters the standard fonts can't draw came out as `?`: mark the annotation with the first.
     let missing = appearance::undrawable_text(d).map(|(_, c)| c);
+    // BailanCraft: the Thai Type 3 fonts Thai text was drawn with (fonts::thai_draw).
+    let mut stream = stream;
+    let _ = pdfcraft_fonts::thai_draw::materialize(doc, &mut stream);
     let ap = doc.add(Object::Stream(stream));
     // A copy (a shared /AP is left alone) that keeps unknown entries; the old down and rollover
     // appearances would show the previous look on press or hover, so they go with the old /N.

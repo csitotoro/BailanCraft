@@ -75,6 +75,9 @@ pub fn with_field_appearances_cached(doc: &Document, cache: &mut FieldAppearance
                 }
             };
             let target = copy.get_or_insert_with(|| doc.clone());
+            // BailanCraft: the Thai Type 3 fonts a Thai value was drawn with (fonts::thai_draw).
+            let mut stream = stream;
+            let _ = pdfcraft_fonts::thai_draw::materialize(target, &mut stream);
             let ap = target.add(Object::Stream(stream));
             let mut fresh = Dict::new();
             match &state {

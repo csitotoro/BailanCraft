@@ -15,3 +15,5 @@ skrifa = "0.44"
 # Arabic shaping for text written into PDFs; already in the tree via egui, on the same read-fonts.
 harfrust = "0.12"
 unicode-bidi = "0.3"
+# BailanCraft: Thai word breaks for wrapping Thai in generated appearances (thai_draw.rs).
+icu_segmenter = { version = "2", default-features = false, features = ["compiled_data"] }

@@ -11,7 +11,7 @@
 //! Helvetica's proportions by character class (no font program or metrics file is bundled).
 
 use pdfcraft_cos::{Dict, Object, PdfString, Stream};
-use pdfcraft_fonts::{first_undrawable, literal, win_ansi};
+use pdfcraft_fonts::{first_undrawable, literal, thai_draw, win_ansi};
 pub use pdfcraft_fonts::{helvetica_width as text_width, wrap};
 
 use crate::{NOTE_SIZE, Rgb, n};
@@ -394,7 +394,10 @@ pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
         b"Redact" => ("the redaction's overlay text", text(b"OverlayText")?),
         _ => return None,
     };
-    Some((what, first_undrawable(&text)?))
+    // BailanCraft: a text box (Fill & Sign text too) draws Thai from the Thai face (fonts::thai_draw).
+    let c =
+        if what == "the comment's text" && thai_draw::available() { thai_draw::first_undrawable_standard(&text) } else { first_undrawable(&text) };
+    Some((what, c?))
 }
 
 /// `/Font` resources naming `/Helv`: standard Helvetica with WinAnsiEncoding.
@@ -1089,7 +1092,13 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
         rg(text_color)
     ));
     let mut out = c.into_bytes();
-    let lines = wrap(&text, size, width);
+    // BailanCraft: Thai is shaped and drawn from the Thai face in Type 3 fonts, which
+    // `draw::apply_appearance` adds to the document (fonts::thai_draw); rows end between words.
+    let thai = thai_draw::available() && thai_draw::has_thai(&text);
+    let measure = |s: &str, z: f64| if thai { thai_draw::width(s, z, text_width) } else { text_width(s, z) };
+    let lines = if thai { thai_draw::wrap(&text, size, width, measure) } else { wrap(&text, size, width) };
+    let mut glyphs = thai_draw::Glyphs::new();
+    let mut thai_lines: Vec<String> = Vec::new();
     let mut y = rect[3] - pad - size * 0.9;
     if round {
         y -= ((rect[3] - rect[1] - 2.0 * pad - lines.len() as f64 * size * 1.2) / 2.0).max(0.0);
@@ -1098,20 +1107,26 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
         if y < rect[1] - size {
             break;
         }
-        let lw = text_width(&line, size);
+        let lw = measure(&line, size);
         let x = match q {
             1 => rect[0] + pad + (width - lw) / 2.0,
             2 => rect[2] - pad - lw,
             _ => rect[0] + pad,
         };
         out.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
-        out.extend(literal(&win_ansi(&line)));
-        out.extend_from_slice(b" Tj\n");
+        if thai && thai_draw::has_thai(&line) {
+            out.extend(thai_draw::show_line(&mut glyphs, &line, size, "Helv", win_ansi));
+            thai_lines.push(line);
+        } else {
+            out.extend(literal(&win_ansi(&line)));
+            out.extend_from_slice(b" Tj\n");
+        }
         y -= size * 1.2;
     }
     out.extend_from_slice(b"ET\n");
     res.set(b"Font".to_vec(), helvetica_resource());
     let mut stream = form(full, &out, res);
+    thai_draw::record_lines(&mut stream.dict, &thai_lines);
     if let Some(m) = matrix {
         stream.dict.set(b"Matrix".to_vec(), Object::Array(m.iter().copied().map(Object::Real).collect()));
     }

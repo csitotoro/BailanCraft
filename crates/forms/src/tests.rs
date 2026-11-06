@@ -5651,3 +5651,61 @@ fn locked_button_export_edits_leave_the_document_unchanged() {
         assert_eq!(write_incremental(&doc, &SaveOptions::default()).unwrap(), before);
     }
 }
+
+/// BailanCraft: Thai in a field whose font is Helvetica (or a simple font that can't hold it) is
+/// drawn from the Thai face, shaped, in Type 3 fonts added to the document: no `?`, no undrawn
+/// mark, and the ToUnicode map gives the value back. Before, it was drawn `????` and marked.
+#[test]
+fn thai_values_are_drawn_from_the_thai_face() {
+    if !pdfcraft_fonts::thai_draw::available() {
+        return;
+    }
+    let objs: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 600 800] >>".into(),
+        "<< /Type /Page /Parent 2 0 R /Annots [6 0 R 7 0 R 8 0 R] >>".into(),
+        "<< /Fields [6 0 R 7 0 R 8 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 5 0 R >> >> >>".into(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".into(),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /DA (/Helv 12 Tf 0 g) /Rect [50 700 300 718] /P 3 0 R >>".into(),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (note) /Ff 4096 /DA (/Helv 12 Tf 0 g) /Rect [50 500 170 650] /P 3 0 R >>".into(),
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (code) /Ff 16777216 /MaxLen 6 /DA (/Helv 12 Tf 0 g) /Rect [50 400 170 420] /P 3 0 R >>".into(),
+    ];
+    let mut doc = document(&objs);
+    let shown = |doc: &Document, name: &str| {
+        let all = fields(doc);
+        let w = &field(&all, name).widgets[0];
+        let n = doc.get(w.obj).as_dict().unwrap().get(b"AP").unwrap().as_dict().unwrap().reference(b"N").unwrap();
+        let Object::Stream(s) = &*doc.get(n) else { panic!() };
+        let fonts = doc.resolve(s.dict.get(b"Resources").unwrap()).as_dict().unwrap().get(b"Font").map(|f| doc.resolve(f)).unwrap();
+        let font_names: Vec<String> = fonts.as_dict().unwrap().iter().map(|(k, _)| String::from_utf8_lossy(k).into_owned()).collect();
+        let thai_font = fonts.as_dict().unwrap().reference(b"BCTh0").map(|r| doc.get(r).as_dict().cloned().unwrap());
+        let mark = doc.get(w.obj).as_dict().and_then(pdfcraft_fonts::undrawn_mark);
+        let leftover = s.dict.get(pdfcraft_fonts::thai_draw::LINES_KEY).is_some();
+        (String::from_utf8_lossy(&s.decoded().unwrap()).into_owned(), font_names, thai_font, mark, leftover)
+    };
+    set_value(&mut doc, "name", &FieldValue::Text("นาย สมชาย ใจดี (Somchai)".into())).unwrap();
+    assert_eq!(field(&fields(&doc), "name").value, ["นาย สมชาย ใจดี (Somchai)"]);
+    let (ap, fonts, thai_font, mark, leftover) = shown(&doc, "name");
+    assert!(!ap.contains('?'), "no ? in {ap}");
+    assert!(ap.contains("/BCTh0 12 Tf") && ap.contains(r"(Somchai\)) Tj"), "{ap}");
+    assert!(fonts.contains(&"BCTh0".to_string()) && fonts.contains(&"Helv".to_string()), "{fonts:?}");
+    let thai_font = thai_font.expect("the Thai Type 3 font is in the document");
+    assert_eq!(thai_font.name(b"Subtype"), Some(&b"Type3"[..]));
+    assert!(thai_font.get(b"ToUnicode").is_some());
+    assert_eq!(mark, None, "nothing is drawn as ?");
+    assert!(!leftover, "the private key is removed");
+    // Multiline: Thai wraps between words, never inside one (the box is 120 pt wide).
+    set_value(&mut doc, "note", &FieldValue::Text("ข้อความยาวเกินความกว้างของกล่องข้อความในแบบฟอร์ม".into())).unwrap();
+    let (ap, _, thai_font, mark, _) = shown(&doc, "note");
+    assert!(ap.matches(" Tm ").count() >= 2, "wrapped: {ap}");
+    assert!(thai_font.is_some() && mark.is_none(), "{ap}");
+    // Comb: a letter keeps its vowels and tone marks in its cell. MaxLen counts characters, as
+    // in other viewers, so "ปู่น้ำ" (six) fits six cells and fills two.
+    set_value(&mut doc, "code", &FieldValue::Text("ปู่น้ำ".into())).unwrap();
+    let (ap, _, thai_font, mark, _) = shown(&doc, "code");
+    assert_eq!(ap.matches(" Tm ").count(), 2, "two cells: {ap}");
+    assert!(thai_font.is_some() && mark.is_none(), "{ap}");
+    // Text neither Helvetica nor the Thai face holds is still marked.
+    set_value(&mut doc, "name", &FieldValue::Text("ชื่อ 签".into())).unwrap();
+    assert_eq!(shown(&doc, "name").3, Some('签'));
+}

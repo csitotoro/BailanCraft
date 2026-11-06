@@ -446,6 +446,9 @@ fn redraw(doc: &mut Document, f: &Field, values: &[String], scripts: &mut dyn Sc
             }
             None => appearance::field_appearance_drawn(doc, f, w, values, true),
         };
+        // BailanCraft: the Thai Type 3 fonts a Thai value was drawn with (fonts::thai_draw).
+        let mut stream = stream;
+        let _ = pdfcraft_fonts::thai_draw::materialize(doc, &mut stream);
         undrawn |= missing.is_some();
         let existing_ap = in_place
             .then(|| {

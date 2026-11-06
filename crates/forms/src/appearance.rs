@@ -23,7 +23,7 @@
 
 use pdfcraft_cos::{Dict, Document, Object, Stream};
 use pdfcraft_fonts::pdf::Metrics;
-use pdfcraft_fonts::{UnicodeCMap, cjk_width, helvetica_width, literal, win_ansi, wrap_with};
+use pdfcraft_fonts::{UnicodeCMap, cjk_width, helvetica_width, literal, thai_draw, win_ansi, wrap_with};
 
 use crate::{Field, FieldKind, Widget, acroform, flags};
 
@@ -744,6 +744,10 @@ pub fn value_overflow(doc: &Document, f: &Field, w: &Widget) -> Option<Overflow>
 fn draws(doc: &Document, f: &Field, wd: &Dict, text: &str) -> bool {
     let da = parse_da(wd.get(b"DA").and_then(|o| doc.resolve(o).as_string().map(|s| s.to_text())).as_deref().unwrap_or(&f.da));
     let enc = dr_font(doc, &da.font).map(|(_, enc)| enc).filter(|enc| enc.can_encode(text)).unwrap_or(FontText::WinAnsi);
+    // BailanCraft: Thai in the Helvetica stand-in is drawn from the Thai face.
+    if matches!(enc, FontText::WinAnsi) && thai_draw::available() && thai_draw::has_thai(text) {
+        return thai_draw::first_undrawable_standard(text).is_none();
+    }
     enc.first_unencodable(text).is_none()
 }
 
@@ -791,7 +795,12 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
         Some((o, enc)) => (da.font.clone(), o, enc),
         None => ("Helv".to_string(), helvetica(), FontText::WinAnsi),
     };
-    let width_of = |text: &str, size: f64| enc.width(text, size);
+    // BailanCraft: Thai in the Helvetica stand-in is drawn from the Thai face, shaped, in Type 3
+    // fonts the caller adds with `pdfcraft_fonts::thai_draw::materialize`.
+    let thai = matches!(enc, FontText::WinAnsi)
+        && thai_draw::available()
+        && (thai_draw::has_thai(&text) || (f.kind == FieldKind::List && f.options.iter().any(|(_, d)| thai_draw::has_thai(d))));
+    let width_of = |text: &str, size: f64| if thai { thai_draw::width(text, size, |s, z| enc.width(s, z)) } else { enc.width(text, size) };
     let (mut c, bw) = frame(doc, &wd, width, height);
     let pad = 2.0 + bw;
     let inner_w = (width - 2.0 * pad).max(1.0);
@@ -799,13 +808,24 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
     let mut body: Vec<u8> = Vec::new();
     // The first character drawn that the font can't hold (drawn as `?`), for the caller to report.
     let mut unencodable: Option<char> = None;
-    let mut show = |body: &mut Vec<u8>, x: f64, y: f64, text: &str| {
+    // BailanCraft: the Thai clusters drawn so far, and the lines drawn with them (in order).
+    let mut glyphs = thai_draw::Glyphs::new();
+    let mut thai_lines: Vec<String> = Vec::new();
+    let mut show = |body: &mut Vec<u8>, x: f64, y: f64, size: f64, text: &str| {
         // A line break in a single-line value is a space, as in viewers (multiline text is split).
         let text: String = text.chars().map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c }).collect();
+        body.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
+        if thai && thai_draw::has_thai(&text) {
+            if unencodable.is_none() {
+                unencodable = thai_draw::first_undrawable_standard(&text);
+            }
+            body.extend(thai_draw::show_line(&mut glyphs, &text, size, &font_name, win_ansi));
+            thai_lines.push(text);
+            return;
+        }
         if unencodable.is_none() {
             unencodable = enc.first_unencodable(&text);
         }
-        body.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
         body.extend(literal(&enc.encode(&text)));
         body.extend_from_slice(b" Tj\n");
     };
@@ -834,7 +854,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                 if values.contains(export) {
                     c.push_str(&format!("0.6 0.75 0.86 rg\n{} {} {} {} re f\n", n(bw), n(y - line), n(width - 2.0 * bw), n(line)));
                 }
-                show(&mut body, pad, y - line + size * 0.25, display);
+                show(&mut body, pad, y - line + size * 0.25, size, display);
                 y -= line;
             }
         }
@@ -845,7 +865,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                     size = auto_text_size(&text, inner_w, height - 2.0 * pad, true, width_of);
                 }
                 let mut y = height - pad - size * 0.85;
-                let lines = wrap_with(&text, size, inner_w, width_of);
+                let lines = if thai { thai_draw::wrap(&text, size, inner_w, width_of) } else { wrap_with(&text, size, inner_w, width_of) };
                 // The lines whose descent stays inside the border; the rest are cut off.
                 let mut room = 0;
                 for line in &lines {
@@ -855,7 +875,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                     if y - 0.207 * size >= bw - 0.01 {
                         room += 1;
                     }
-                    show(&mut body, x_for(line, size), y, line);
+                    show(&mut body, x_for(line, size), y, size, line);
                     y -= size * 1.15;
                 }
                 if room < lines.len() {
@@ -883,16 +903,21 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                     let cells = f.max_len.unwrap_or(1).max(1);
                     let cell = width / cells as f64;
                     c.push_str(&comb_dividers(doc, &wd, width, height, cells));
-                    for (i, ch) in text.chars().take(cells).enumerate() {
-                        let s = ch.to_string();
-                        show(&mut body, cell * i as f64 + (cell - width_of(&s, size)) / 2.0, y, &s);
+                    // BailanCraft: a Thai letter keeps its vowels and tone marks in its cell.
+                    let units: Vec<String> = if thai {
+                        thai_draw::letters(&text).into_iter().map(str::to_owned).collect()
+                    } else {
+                        text.chars().map(|c| c.to_string()).collect()
+                    };
+                    for (i, s) in units.iter().take(cells).enumerate() {
+                        show(&mut body, cell * i as f64 + (cell - width_of(s, size)) / 2.0, y, size, s);
                     }
                 } else {
                     let tw = width_of(&text.replace(['\n', '\r'], " "), size);
                     if overflow.is_none() && tw > inner_w + 0.01 {
                         overflow = Some(Overflow::Wide { width: tw, room: inner_w, size });
                     }
-                    show(&mut body, x_for(&text, size), y, &text);
+                    show(&mut body, x_for(&text, size), y, size, &text);
                 }
             }
         }
@@ -922,6 +947,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
     d.set(b"Subtype".to_vec(), Object::name("Form"));
     set_form_box(&mut d, place);
     d.set(b"Resources".to_vec(), Object::Dict(res));
+    thai_draw::record_lines(&mut d, &thai_lines);
     // Nothing drawn is nothing cut, however small the box.
     let overflow = overflow.filter(|_| !text.is_empty());
     (Stream::flate(d, &content), unencodable, overflow)

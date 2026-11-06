@@ -2779,3 +2779,51 @@ fn indirect_typewriter_names_keep_outer_whitespace_in_summaries() {
     check(&doc);
     check(&reopen(&doc));
 }
+
+/// BailanCraft: Thai in Fill & Sign text (a typewriter annotation) and in a text box comment is
+/// drawn from the Thai face, shaped, in Type 3 fonts added to the document: no `?` and no
+/// undrawn mark. Long Thai wraps between words. Before, it was drawn `????` and marked.
+#[test]
+fn thai_comment_text_is_drawn_from_the_thai_face() {
+    if !pdfcraft_fonts::thai_draw::available() {
+        return;
+    }
+    let mut doc = fixture();
+    let fonts_of = |doc: &Document, d: &Dict| -> Vec<String> {
+        let n = d.get(b"AP").map(|a| doc.resolve(a)).and_then(|a| a.as_dict().and_then(|a| a.reference(b"N"))).unwrap();
+        let obj = doc.get(n);
+        let Object::Stream(s) = &*obj else { panic!() };
+        assert!(s.dict.get(pdfcraft_fonts::thai_draw::LINES_KEY).is_none(), "the private key is removed");
+        let res = doc.resolve(s.dict.get(b"Resources").unwrap());
+        let fonts = doc.resolve(res.as_dict().unwrap().get(b"Font").unwrap());
+        let fonts = fonts.as_dict().unwrap();
+        if let Some(r) = fonts.reference(b"BCTh0") {
+            let f = doc.get(r);
+            assert_eq!(f.as_dict().unwrap().name(b"Subtype"), Some(&b"Type3"[..]));
+        }
+        fonts.iter().map(|(k, _)| String::from_utf8_lossy(k).into_owned()).collect()
+    };
+    let mut typed = new(0, Shape::Typewriter { rect: [100.0, 600.0, 400.0, 620.0], font_size: 12.0 });
+    typed.contents = "นาย สมชาย ใจดี 081-234-5678".into();
+    let t = add_annotation(&mut doc, &typed, &meta("t")).unwrap();
+    let d = list(&doc, 0)[t].clone();
+    assert_eq!(text(&d, b"Contents"), "นาย สมชาย ใจดี 081-234-5678");
+    let ap = ap_content(&doc, &d);
+    assert!(!ap.contains('?') && ap.contains("/BCTh0 12 Tf") && ap.contains("( 081-234-5678) Tj"), "{ap}");
+    assert_eq!(pdfcraft_fonts::undrawn_mark(&d), None);
+    assert!(fonts_of(&doc, &d).contains(&"BCTh0".to_string()));
+    // A narrow text box: the Thai sentence wraps between words.
+    let mut boxed = new(0, Shape::TextBox { rect: [100.0, 400.0, 220.0, 560.0], font_size: 12.0 });
+    boxed.contents = "ข้อความยาวเกินความกว้างของกล่องข้อความ".into();
+    let b = add_annotation(&mut doc, &boxed, &meta("b")).unwrap();
+    let d = list(&doc, 0)[b].clone();
+    let ap = ap_content(&doc, &d);
+    assert!(ap.matches(" Tm ").count() >= 2, "wrapped: {ap}");
+    assert_eq!(pdfcraft_fonts::undrawn_mark(&d), None);
+    assert!(fonts_of(&doc, &d).contains(&"BCTh0".to_string()));
+    // Text neither font holds is still marked.
+    let mut mixed = new(0, Shape::TextBox { rect: [100.0, 300.0, 300.0, 340.0], font_size: 12.0 });
+    mixed.contents = "ชื่อ 签".into();
+    let m = add_annotation(&mut doc, &mixed, &meta("m")).unwrap();
+    assert_eq!(pdfcraft_fonts::undrawn_mark(&list(&doc, 0)[m]), Some('签'));
+}
