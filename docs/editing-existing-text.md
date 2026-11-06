@@ -57,8 +57,9 @@ Rewrapped Chinese and Japanese text, which has no spaces between words, may brea
 two characters. A row never begins with closing punctuation, a closing bracket or quote, a small
 kana or the prolonged sound mark, and never ends with an opening bracket or quote or a currency
 sign before an amount: the line-start and line-end rules of JIS X 4051, as in Unicode line
-breaking (UAX #14). Latin words inside such text are not split. Korean and Thai still break only
-at spaces.
+breaking (UAX #14). Latin words inside such text are not split. Korean still breaks only at
+spaces. Thai breaks between words, which BailanCraft finds with the ICU4X dictionary (Thai has no
+spaces between words).
 
 Select text within the editor before changing size, colour, font, underline or spacing to
 format that selection. Automation supports up to 1024 disjoint UTF-8 byte ranges with the

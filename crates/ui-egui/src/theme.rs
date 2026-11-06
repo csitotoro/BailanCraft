@@ -218,6 +218,8 @@ impl CjkPreference {
 /// faces take effect next frame.
 pub fn install_fonts_for(ctx: &egui::Context, cjk: CjkPreference) {
     ctx.set_fonts(installed_font_definitions(cjk));
+    // BailanCraft: wrap Thai interface text between words, not inside them.
+    ctx.set_line_breaker(std::sync::Arc::new(crate::thai_breaks::ThaiLineBreaker));
 }
 
 /// The name of the installed face [`installed_font_definitions`] may add after the embedded ones.

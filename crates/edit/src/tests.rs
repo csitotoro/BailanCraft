@@ -5818,6 +5818,36 @@ fn added_thai_text_wraps_clusters_and_survives_reopen() {
     assert!(arabic_font_names(&doc, 0).is_empty());
 }
 
+/// BailanCraft: Thai added text wraps between words (dictionary segmentation), not inside one.
+/// Before, the sentence below wrapped as "…ของกล่" / "องข้อความ", cutting "กล่อง" (box) in two.
+#[test]
+fn added_thai_text_wraps_between_words() {
+    if pdfcraft_fonts::document_thai_font().is_none() {
+        return;
+    }
+    let sentence = "ประโยคยาวที่ไม่มีเว้นวรรคเพื่อทดสอบการตัดคำภาษาไทยเมื่อข้อความยาวเกินความกว้างของกล่องข้อความ";
+    for right in [140.0, 200.0, 260.0, 300.0, 340.0] {
+        let t = AddedText { rect: [40.0, 330.0, right, 600.0], text: sentence.into(), size: 16.0, ..AddedText::default() };
+        let lines = super::added::lines(&t);
+        assert!(lines.len() > 1, "{right}: wraps: {lines:?}");
+        assert_eq!(lines.concat(), sentence, "{right}: nothing lost or added");
+        for pair in lines.windows(2) {
+            let (before, after) = (&pair[0], &pair[1]);
+            assert!(!before.ends_with("กล่") && !after.starts_with("อง"), "{right}: กล่อง cut: {lines:?}");
+            assert!(!(before.ends_with("ข้อ") && after.starts_with("ความ")), "{right}: ข้อความ cut: {lines:?}");
+            assert!(!before.ends_with("ภาษา") || !after.starts_with("ไทย"), "{right}: ภาษาไทย cut: {lines:?}");
+        }
+    }
+    // A Latin word in a Thai paragraph is not cut, and the space a row breaks at is dropped.
+    let t = AddedText {
+        rect: [0.0, 0.0, 150.0, 300.0], text: "ใบเสนอราคา Quotation No. 2569/0042".into(), size: 16.0, ..AddedText::default()
+    };
+    let lines = super::added::lines(&t);
+    assert!(lines.iter().any(|l| l.contains("Quotation")), "{lines:?}");
+    assert!(lines.iter().all(|l| !l.ends_with(' ') && !l.starts_with(' ')), "{lines:?}");
+    assert_eq!(lines.join(" "), "ใบเสนอราคา Quotation No. 2569/0042");
+}
+
 #[test]
 fn group_moves_preserve_glyph_bytes_and_unselected_text_state() {
     for content in [

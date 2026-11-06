@@ -73,11 +73,15 @@ pub(super) fn wrapped(t: &AddedText) -> Vec<(String, bool, usize)> {
     out
 }
 
-/// Thai wrapping at shaped cluster boundaries never detaches a tone/vowel mark from its base.
-/// This is glyph-safe wrapping, not dictionary-based Thai word segmentation.
+/// Thai wrapping. Atoms are shaped clusters (a base letter with its vowels and tone marks) and
+/// Latin characters, so a mark is never detached from its base. A row ends at the last line-break
+/// opportunity that fits ([`crate::linebreak::opportunities`]: between Thai words found with a
+/// dictionary, after spaces, around Latin words); only a single word wider than the box is cut
+/// between clusters. Spaces at the end of a row don't count towards its width and are dropped,
+/// as the space-separated path drops the space it breaks at.
 fn thai_lines(t: &AddedText, para: &str, width: f64) -> Result<Vec<String>, EditError> {
     let (pieces, _) = shaped_layout(t, para, false)?;
-    let mut atoms = Vec::new();
+    let mut atoms: Vec<(String, f64)> = Vec::new();
     for piece in pieces {
         match piece {
             Piece::Shaped(clusters) => atoms.extend(clusters.into_iter().map(|c| (c.text, c.advance * t.size + t.char_spacing))),
@@ -88,18 +92,61 @@ fn thai_lines(t: &AddedText, para: &str, width: f64) -> Result<Vec<String>, Edit
             })),
         }
     }
+    // Where each atom ends in `para`. The atoms spell the paragraph; if they ever didn't, the
+    // offsets would mean nothing, so wrap between clusters as before rather than guess.
+    let ends: Vec<usize> = atoms
+        .iter()
+        .scan(0usize, |at, (text, _)| {
+            *at = at.saturating_add(text.len());
+            Some(*at)
+        })
+        .collect();
+    let spelled = ends.last().copied().unwrap_or(0) == para.len() && atoms.iter().map(|(s, _)| s.as_str()).eq(para_atoms(para, &atoms));
+    let breaks: std::collections::HashSet<usize> =
+        if spelled { crate::linebreak::opportunities(para).into_iter().collect() } else { std::collections::HashSet::new() };
+    let blank = |s: &str| !s.is_empty() && s.chars().all(|c| c == ' ');
+
     let mut lines = Vec::new();
-    let (mut line, mut used) = (String::new(), 0.0);
-    for (text, advance) in atoms {
-        if !line.is_empty() && used + advance > width {
-            lines.push(std::mem::take(&mut line));
-            used = 0.0;
+    // The current row is atoms[start..i]; `fit` is the index after the last atom at whose end
+    // the row may break.
+    let mut start = 0usize;
+    let mut used = 0.0f64;
+    let mut fit: Option<usize> = None;
+    let mut i = 0usize;
+    while let Some((text, advance)) = atoms.get(i) {
+        let overflows = i > start && used + advance > width && !blank(text);
+        if overflows {
+            // Break at the last opportunity in the row, else (one word wider than the box) here.
+            let end = fit.filter(|&f| f > start).unwrap_or(i);
+            lines.push(join_row(atoms.get(start..end).unwrap_or_default()));
+            start = end;
+            used = atoms.get(start..i).unwrap_or_default().iter().map(|(_, w)| w).sum::<f64>();
+            fit = None;
+            continue;
         }
-        line.push_str(&text);
         used += advance;
+        i += 1;
+        if ends.get(i - 1).is_some_and(|e| breaks.contains(e)) {
+            fit = Some(i);
+        }
     }
-    lines.push(line);
+    lines.push(join_row(atoms.get(start..).unwrap_or_default()));
     Ok(lines)
+}
+
+/// `para` cut into the same pieces as `atoms` (by their byte lengths), to check they spell it.
+fn para_atoms<'a>(para: &'a str, atoms: &'a [(String, f64)]) -> impl Iterator<Item = &'a str> + 'a {
+    atoms.iter().scan(0usize, move |at, (text, _)| {
+        let from = *at;
+        *at = at.saturating_add(text.len());
+        Some(para.get(from..*at).unwrap_or(""))
+    })
+}
+
+/// A row's text without the spaces it ends with.
+fn join_row(atoms: &[(String, f64)]) -> String {
+    let row: String = atoms.iter().map(|(s, _)| s.as_str()).collect();
+    row.trim_end_matches(' ').to_owned()
 }
 
 pub(super) fn is_thai(c: char) -> bool {

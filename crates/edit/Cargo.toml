@@ -21,6 +21,9 @@ kurbo = { workspace = true }
 # Display order of right-to-left lines in added text, and reading and writing order in Edit text;
 # already in the tree via the interface.
 unicode-bidi = "0.3"
+# BailanCraft: line-break opportunities (UAX #14) with dictionary segmentation for Thai, so added
+# and edited Thai text wraps between words; same ICU4X family as icu_properties in the engine.
+icu_segmenter = { version = "2", default-features = false, features = ["compiled_data"] }
 
 [dev-dependencies]
 hayro-syntax = { workspace = true }

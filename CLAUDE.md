@@ -46,7 +46,10 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
 - Rust only in the product and the build.
 
 ## Known Thai gaps (the fork's backlog)
-- Line breaking splits Thai words (no dictionary segmentation; `crates/edit/src/linebreak.rs`).
+- Thai line breaking uses the ICU4X dictionary (`icu_segmenter`): Add Text and Edit text
+  (`crates/edit/src/linebreak.rs`, `added/layout.rs`) and interface text
+  (`crates/ui-egui/src/thai_breaks.rs`). The per-character rule in `text_regions/styled.rs`
+  (`linebreak::between`) still can't see Thai words.
 - OCR has no Thai (ocrs models are Latin-only; Tesseract allow-list lacks `tha`, `crates/ocr`).
 - Forms and Fill & Sign don't write Thai; `doc_create` from text is WinAnsi-only.
 - Some UI strings have no Thai translation yet (e.g. the update dialog).
@@ -56,7 +59,8 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   left behind, hand-off never connects), inside and outside the sandbox. They don't touch fork
   code. In the real app a second launch opens its own window instead of a tab. Not yet compared
   with upstream on another machine.
-- `pdfcraft-ui-egui --test it` once died with STATUS_ACCESS_VIOLATION mid-run under load (native
-  code); a rerun passed. Rerun before suspecting a change.
+- `pdfcraft-ui-egui --test it` sometimes dies with STATUS_ACCESS_VIOLATION mid-run (native code,
+  a different test each time: fill_sign once, editing once); reruns passed. Rerun before
+  suspecting a change.
 - Six upstream update-flow tests are `#[ignore]`d because `brand::UPDATE_CHECK` is off;
   `bailancraft_never_asks_the_upstream_release_feed` covers the fork's behaviour.

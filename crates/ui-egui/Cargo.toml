@@ -10,6 +10,8 @@ rust-version = "1.95"
 workspace = true
 
 [dependencies]
+# BailanCraft: Thai word breaks for wrapping interface text (thai_breaks.rs).
+icu_segmenter = { version = "2", default-features = false, features = ["compiled_data"] }
 craft-ui = { workspace = true }
 # The menus: native on macOS, an egui bar elsewhere, from one definition (menus.rs).
 craft-menu = { workspace = true }
