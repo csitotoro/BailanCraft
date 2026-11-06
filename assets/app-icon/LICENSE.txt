@@ -1,12 +1,16 @@
-PdfCraft app icon (pdfcraft.svg, pdfcraft-small.svg and every file derived from them in this
-directory: pdfcraft-1024.png, pdfcraft.icns, pdfcraft.ico, hicolor/).
+BailanCraft app icon (pdfcraft.svg, pdfcraft-small.svg and every file derived from them in this
+directory: pdfcraft-1024.png, pdfcraft.ico, hicolor/): a bundle of palm-leaf (bai lan) manuscript
+leaves tied with a red cord.
 
-Original artwork made for this project by the project owner, drawn in ArtCraft and vectorised for
-PdfCraft (no third-party material). Licensed like the rest of PdfCraft, under either of
+Original artwork made for BailanCraft (no third-party material). Licensed like the rest of
+BailanCraft and PdfCraft, under either of
 
   * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
   * MIT license (https://opensource.org/licenses/MIT)
 
 at your option.
 
-Regenerate the derived files with packaging/icons.sh.
+pdfcraft.icns (macOS) still holds the upstream PdfCraft icon, by the PdfCraft contributors under
+the same licences; it is not regenerated on Windows.
+
+Regenerate the derived files with packaging/bailancraft-icons.ps1 (Windows) or packaging/icons.sh.
