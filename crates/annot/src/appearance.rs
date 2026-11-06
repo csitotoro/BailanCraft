@@ -394,9 +394,10 @@ pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
         b"Redact" => ("the redaction's overlay text", text(b"OverlayText")?),
         _ => return None,
     };
-    // BailanCraft: a text box (Fill & Sign text too) draws Thai from the Thai face (fonts::thai_draw).
-    let c =
-        if what == "the comment's text" && thai_draw::available() { thai_draw::first_undrawable_standard(&text) } else { first_undrawable(&text) };
+    // BailanCraft: a text box (Fill & Sign text too) and a stamp's by-line draw Thai from the Thai
+    // face (fonts::thai_draw).
+    let thai_ok = matches!(what, "the comment's text" | "the stamp's \"By\" line");
+    let c = if thai_ok && thai_draw::available() { thai_draw::first_undrawable_standard(&text) } else { first_undrawable(&text) };
     Some((what, c?))
 }
 

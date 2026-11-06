@@ -6,6 +6,36 @@ use super::place::{
     place_inside_wrapper, stream_tag, text_op, undrawable, wrapper_role,
 };
 use super::{Document, EditError, Object, added, backdrop, helvetica_width};
+use pdfcraft_cos::ObjRef;
+use pdfcraft_fonts::{thai_draw, win_ansi};
+
+/// BailanCraft: resource-name prefixes of the Thai Type 3 fonts of headers and footers and of
+/// watermarks, distinct so the two marks on one page never take each other's fonts.
+const HF_THAI: &str = "BCThHF";
+const WM_THAI: &str = "BCThWM";
+
+/// BailanCraft: the Thai Type 3 fonts for every cluster in `glyphs` (none when it is empty).
+fn thai_fonts(doc: &mut Document, glyphs: &thai_draw::Glyphs, prefix: &str) -> Result<Vec<(String, ObjRef)>, EditError> {
+    if glyphs.is_empty() {
+        return Ok(Vec::new());
+    }
+    thai_draw::write_fonts(doc, glyphs, prefix).map_err(|e| EditError::Invalid(format!("the Thai font can't draw this text ({e:?})")))
+}
+
+/// BailanCraft: name the Thai Type 3 fonts in a page's font resources (its own copy).
+fn add_thai_fonts(doc: &mut Document, page: &pdfcraft_model::Page, fonts: &[(String, ObjRef)]) -> Result<(), EditError> {
+    if fonts.is_empty() {
+        return Ok(());
+    }
+    let mut res = page.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
+    let mut font_dict = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
+    for (name, r) in fonts {
+        font_dict.set(name.clone().into_bytes(), Object::Ref(*r));
+    }
+    res.set(b"Font".to_vec(), Object::Dict(font_dict));
+    doc.update_dict(page.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(res)))?;
+    Ok(())
+}
 
 /// Commit one complete mark operation only after every selected page succeeds. The snapshot
 /// shares original bytes, cross-references, caches and unchanged objects; only the overlay table
@@ -73,6 +103,21 @@ fn add_header_footer_in_place(doc: &mut Document, pages: &[usize], hf: &HeaderFo
     }
     let all = page_list(doc);
     let count = all.len();
+    // BailanCraft: Thai lines are shaped and drawn from the Thai face. Every page's lines are
+    // registered first, so one set of Type 3 fonts serves the whole run (fonts::thai_draw).
+    let mut thai_glyphs = thai_draw::Glyphs::new();
+    if thai_draw::available() && hf.text.iter().any(|t| thai_draw::has_thai(t)) {
+        for k in 0..pages.len() {
+            let number = u32::try_from(u64::from(hf.start_number) + k as u64).unwrap_or(u32::MAX);
+            let bates = bates0.saturating_add(k as u64);
+            for template in hf.text.iter().filter(|t| thai_draw::has_thai(t)) {
+                for line in expand(template, number, count, bates, cx).lines().filter(|l| thai_draw::has_thai(l)) {
+                    let _ = thai_draw::show_line_as(&mut thai_glyphs, line, 1.0, "F", |_| Vec::new(), HF_THAI);
+                }
+            }
+        }
+    }
+    let thai_fonts = thai_fonts(doc, &thai_glyphs, HF_THAI)?;
     for (k, &i) in pages.iter().enumerate() {
         let page = &all[i];
         let (w, h) = page.display_size(doc);
@@ -100,8 +145,13 @@ fn add_header_footer_in_place(doc: &mut Document, pages: &[usize], hf: &HeaderFo
             let header = slot < 3;
             let line_h = size * 1.2;
             for (li, line) in lines.iter().enumerate() {
+                let thai = !thai_fonts.is_empty() && thai_draw::has_thai(line);
                 // Centred and right-aligned text is placed by its width in the chosen face.
-                let tw = hf.font.width(line, size, false, false);
+                let tw = if thai {
+                    thai_draw::width(line, size, |s, z| hf.font.width(s, z, false, false))
+                } else {
+                    hf.font.width(line, size, false, false)
+                };
                 let x = match slot % 3 {
                     0 => left,
                     1 => (w - tw) / 2.0,
@@ -109,7 +159,12 @@ fn add_header_footer_in_place(doc: &mut Document, pages: &[usize], hf: &HeaderFo
                 };
                 // Headers hang below the top margin; footers sit on the bottom margin.
                 let y = if header { h - top - size * 0.8 - li as f64 * line_h } else { bottom + (lines.len() - 1 - li) as f64 * line_h };
-                body.extend(text_op(x, y, line));
+                if thai {
+                    body.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
+                    body.extend(thai_draw::show_line_as(&mut thai_glyphs, line, size, &resource, win_ansi, HF_THAI));
+                } else {
+                    body.extend(text_op(x, y, line));
+                }
                 if hf.underline {
                     underlines.push_str(&format!("{} {} {} {} re f\n", n(x), n(y - size * 0.15), n(tw), n((size * 0.06).max(0.4))));
                 }
@@ -126,6 +181,7 @@ fn add_header_footer_in_place(doc: &mut Document, pages: &[usize], hf: &HeaderFo
         if !page_fonts(doc, page).contains(resource.as_bytes()) {
             add_page_resources(doc, page, None, &[(resource.into_bytes(), base)])?;
         }
+        add_thai_fonts(doc, &page_list(doc)[i].clone(), &thai_fonts)?;
         let page = &page_list(doc)[i];
         place(doc, page, MarkKind::HeaderFooter, content, false)?;
         if let Some(Some(m)) = shrinks.get(k) {
@@ -171,6 +227,17 @@ fn add_watermark_in_place(doc: &mut Document, pages: &[usize], wm: &Watermark, r
     }
     let opacity = wm.opacity.clamp(0.0, 1.0);
     let lines: Vec<&str> = text.lines().collect();
+    // BailanCraft: Thai lines are shaped and drawn from the Thai face; one set of Type 3 fonts
+    // serves every page (fonts::thai_draw).
+    let mut thai_glyphs = thai_draw::Glyphs::new();
+    if wm.source.is_none() && thai_draw::available() {
+        for line in lines.iter().filter(|l| thai_draw::has_thai(l)) {
+            let _ = thai_draw::show_line_as(&mut thai_glyphs, line, 1.0, "F", |_| Vec::new(), WM_THAI);
+        }
+    }
+    let thai_fonts = thai_fonts(doc, &thai_glyphs, WM_THAI)?;
+    let thai = |line: &str| !thai_fonts.is_empty() && thai_draw::has_thai(line);
+    let width = |line: &str, size: f64| if thai(line) { thai_draw::width(line, size, helvetica_width) } else { helvetica_width(line, size) };
     for &i in pages {
         let page = page_list(doc)[i].clone();
         let (w, h) = page.display_size(doc);
@@ -185,7 +252,7 @@ fn add_watermark_in_place(doc: &mut Document, pages: &[usize], wm: &Watermark, r
             place(doc, page, MarkKind::Watermark, content.into_bytes(), wm.behind)?;
             continue;
         }
-        let widest = lines.iter().map(|l| helvetica_width(l, 1.0)).fold(0.0, f64::max).max(0.01);
+        let widest = lines.iter().map(|l| width(l, 1.0)).fold(0.0, f64::max).max(0.01);
         let size = if wm.font_size > 0.0 { wm.font_size } else { ((w * w + h * h).sqrt() * 0.5 / widest).clamp(6.0, 300.0) };
         let (s, c) = wm.rotation.to_radians().sin_cos();
         let (cx, cy) = (w / 2.0 + wm.offset[0], h / 2.0 + wm.offset[1]);
@@ -208,12 +275,19 @@ fn add_watermark_in_place(doc: &mut Document, pages: &[usize], wm: &Watermark, r
         let line_h = size * 1.15;
         let total = line_h * (lines.len() as f64 - 1.0);
         for (li, line) in lines.iter().enumerate() {
-            let tw = helvetica_width(line, size);
-            content.extend(text_op(-tw / 2.0, total / 2.0 - li as f64 * line_h - size * 0.35, line));
+            let tw = width(line, size);
+            let (x, y) = (-tw / 2.0, total / 2.0 - li as f64 * line_h - size * 0.35);
+            if thai(line) {
+                content.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
+                content.extend(thai_draw::show_line_as(&mut thai_glyphs, line, size, "PCHelv", win_ansi, WM_THAI));
+            } else {
+                content.extend(text_op(x, y, line));
+            }
         }
         content.extend_from_slice(b"ET\n");
         content.extend_from_slice(END.as_bytes());
         add_resources(doc, &page, Some(opacity), None)?;
+        add_thai_fonts(doc, &page_list(doc)[i].clone(), &thai_fonts)?;
         let page = &page_list(doc)[i];
         place(doc, page, MarkKind::Watermark, content, wm.behind)?;
     }

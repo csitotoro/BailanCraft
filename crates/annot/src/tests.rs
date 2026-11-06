@@ -2827,3 +2827,28 @@ fn thai_comment_text_is_drawn_from_the_thai_face() {
     let m = add_annotation(&mut doc, &mixed, &meta("m")).unwrap();
     assert_eq!(pdfcraft_fonts::undrawn_mark(&list(&doc, 0)[m]), Some('签'));
 }
+
+/// BailanCraft: a dynamic stamp's by-line with a Thai name ("By สมชาย ใจดี …") is drawn from the
+/// Thai face, not as `?`, and the stamp isn't marked undrawn.
+#[test]
+fn stamp_by_line_draws_thai_names() {
+    if !pdfcraft_fonts::thai_draw::available() {
+        return;
+    }
+    let mut doc = fixture();
+    let shape =
+        Shape::Stamp {
+            rect: [100.0, 100.0, 260.0, 142.0], stamp: StampKind::DynApproved, by: Some("By สมชาย ใจดี at 2:14 pm, Nov 06, 2026".into())
+        };
+    let i = add_annotation(
+        &mut doc,
+        &NewAnnotation { page: 0, style: Style::default_for(&shape), shape, contents: String::new(), author: "สมชาย".into() },
+        &Meta::default(),
+    )
+    .unwrap();
+    let d = list(&doc, 0)[i].clone();
+    let ap = ap_content(&doc, &d);
+    assert!(ap.contains("(APPROVED) Tj") && ap.contains("/BCTh0") && !ap.contains('?'), "{ap}");
+    assert!(ap.contains("(By ) Tj") && ap.contains("( at 2:14 pm, Nov 06, 2026) Tj"), "{ap}");
+    assert_eq!(pdfcraft_fonts::undrawn_mark(&d), None);
+}

@@ -349,12 +349,19 @@ pub(super) fn stamp(label: &str, sign_here: bool, rect: [f64; 4], col: Rgb, by: 
     }
     let (title_h, by_h) = if by.is_some() { (h * 0.5, h * 0.22) } else { (h * 0.52, 0.0) };
     let text_area = if sign_here { (x0 + h * 0.45, x1 - lw * 2.0) } else { (x0 + lw * 2.0, x1 - lw * 2.0) };
+    // BailanCraft: Thai in the label or the by-line is drawn from the Thai face (fonts::thai_draw).
+    let thai = |s: &str| pdfcraft_fonts::thai_draw::available() && pdfcraft_fonts::thai_draw::has_thai(s);
+    let bold_w =
+        |s: &str, z: f64| if thai(s) { pdfcraft_fonts::thai_draw::width(s, z, |t, k| text_width(t, k) * 1.12) } else { text_width(s, z) * 1.12 };
+    let plain_w = |s: &str, z: f64| if thai(s) { pdfcraft_fonts::thai_draw::width(s, z, text_width) } else { text_width(s, z) };
+    let mut glyphs = pdfcraft_fonts::thai_draw::Glyphs::new();
+    let mut thai_lines: Vec<String> = Vec::new();
     let mut size = title_h;
-    let tw = text_width(label, size) * 1.12;
+    let tw = bold_w(label, size);
     if tw > text_area.1 - text_area.0 - 4.0 {
         size *= (text_area.1 - text_area.0 - 4.0) / tw;
     }
-    let tw = text_width(label, size) * 1.12;
+    let tw = bold_w(label, size);
     let text_col = if sign_here { [1.0, 1.0, 1.0] } else { col };
     let ty = if by.is_some() { y0 + h * 0.48 } else { y0 + (h - size * 0.72) / 2.0 };
     let mut out = c.into_bytes();
@@ -362,20 +369,30 @@ pub(super) fn stamp(label: &str, sign_here: bool, rect: [f64; 4], col: Rgb, by: 
         format!("BT\n{}/HelvB {} Tf\n1 0 0 1 {} {} Tm ", rg(text_col), n(size), n(text_area.0 + (text_area.1 - text_area.0 - tw) / 2.0), n(ty))
             .bytes(),
     );
-    out.extend(literal(&win_ansi(label)));
-    out.extend_from_slice(b" Tj\n");
+    if thai(label) {
+        out.extend(pdfcraft_fonts::thai_draw::show_line(&mut glyphs, label, size, "HelvB", win_ansi));
+        thai_lines.push(label.to_owned());
+    } else {
+        out.extend(literal(&win_ansi(label)));
+        out.extend_from_slice(b" Tj\n");
+    }
     if let Some(b) = by {
         let mut s = by_h;
-        let bw = text_width(b, s);
+        let bw = plain_w(b, s);
         if bw > text_area.1 - text_area.0 - 4.0 {
             s *= (text_area.1 - text_area.0 - 4.0) / bw;
         }
-        let bw = text_width(b, s);
+        let bw = plain_w(b, s);
         out.extend(
             format!("/Helv {} Tf\n1 0 0 1 {} {} Tm ", n(s), n(text_area.0 + (text_area.1 - text_area.0 - bw) / 2.0), n(y0 + h * 0.18)).bytes(),
         );
-        out.extend(literal(&win_ansi(b)));
-        out.extend_from_slice(b" Tj\n");
+        if thai(b) {
+            out.extend(pdfcraft_fonts::thai_draw::show_line(&mut glyphs, b, s, "Helv", win_ansi));
+            thai_lines.push(b.to_owned());
+        } else {
+            out.extend(literal(&win_ansi(b)));
+            out.extend_from_slice(b" Tj\n");
+        }
     }
     out.extend_from_slice(b"ET\n");
     let font = |base: &str| {
@@ -390,7 +407,9 @@ pub(super) fn stamp(label: &str, sign_here: bool, rect: [f64; 4], col: Rgb, by: 
     fonts.set(b"HelvB".to_vec(), font("Helvetica-Bold"));
     fonts.set(b"Helv".to_vec(), font("Helvetica"));
     res.set(b"Font".to_vec(), Object::Dict(fonts));
-    form(rect, &out, res)
+    let mut stream = form(rect, &out, res);
+    pdfcraft_fonts::thai_draw::record_lines(&mut stream.dict, &thai_lines);
+    stream
 }
 
 /// An ellipse inscribed in a rectangle, as four Bézier arcs.

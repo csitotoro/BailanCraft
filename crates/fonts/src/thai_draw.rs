@@ -31,7 +31,7 @@ const PER_FONT: usize = 240;
 
 /// The resource name of the `i`-th Thai Type 3 font of an appearance.
 pub fn font_name(i: usize) -> String {
-    format!("BCTh{i}")
+    format!("{FONT_PREFIX}{i}")
 }
 
 /// Thai letters, vowels, tone marks and digits (U+0E00–U+0E7F).
@@ -223,6 +223,16 @@ impl Glyphs {
 /// selected again, as the builder left it. Thai the face can't shape is drawn with `encode`
 /// (as `?`), like the rest of the builder's undrawable text.
 pub fn show_line(glyphs: &mut Glyphs, line: &str, size: f64, latin_font: &str, encode: impl Fn(&str) -> Vec<u8>) -> Vec<u8> {
+    show_line_as(glyphs, line, size, latin_font, encode, FONT_PREFIX)
+}
+
+/// The resource-name prefix of an appearance's own Thai fonts ([`font_name`]).
+const FONT_PREFIX: &str = "BCTh";
+
+/// [`show_line`] with the Thai fonts named `{prefix}0`, `{prefix}1`, … : for text drawn straight
+/// into page content, where several marks share the page's resources and each needs its own names.
+pub fn show_line_as(glyphs: &mut Glyphs, line: &str, size: f64, latin_font: &str, encode: impl Fn(&str) -> Vec<u8>, prefix: &str) -> Vec<u8> {
+    let font_name = |i: usize| format!("{prefix}{i}");
     let mut out = Vec::new();
     let mut font: Option<usize> = None;
     let latin_tf = format!("/{latin_font} {} Tf ", num(size));
@@ -275,16 +285,7 @@ pub fn materialize(doc: &mut Document, stream: &mut Stream) -> Result<(), GlyphE
         // Codes are assigned exactly as `show_line` assigned them.
         let _ = show_line(&mut glyphs, &line, 1.0, "F", |_| Vec::new());
     }
-    // Every outline is read before anything is written, so a failure leaves `doc` as it was.
-    let mut outlines: HashMap<u32, GlyphOutline> = HashMap::new();
-    for c in &glyphs.clusters {
-        for (id, _) in &c.glyphs {
-            if !outlines.contains_key(id) {
-                outlines.insert(*id, shaped_glyph(ShapedScript::Thai, *id)?);
-            }
-        }
-    }
-    let fonts: Vec<ObjRef> = glyphs.clusters.chunks(PER_FONT).map(|chunk| type3(doc, chunk, &outlines)).collect();
+    let fonts = write_fonts(doc, &glyphs, FONT_PREFIX)?;
     let mut res = match stream.dict.get(b"Resources").map(|o| doc.resolve(o)) {
         Some(r) => r.as_dict().cloned().unwrap_or_default(),
         None => Dict::new(),
@@ -293,13 +294,28 @@ pub fn materialize(doc: &mut Document, stream: &mut Stream) -> Result<(), GlyphE
         Some(f) => f.as_dict().cloned().unwrap_or_default(),
         None => Dict::new(),
     };
-    for (i, f) in fonts.into_iter().enumerate() {
-        font_dict.set(font_name(i).into_bytes(), Object::Ref(f));
+    for (name, f) in fonts {
+        font_dict.set(name.into_bytes(), Object::Ref(f));
     }
     res.set(b"Font".to_vec(), Object::Dict(font_dict));
     stream.dict.set(b"Resources".to_vec(), Object::Dict(res));
     stream.dict.remove(LINES_KEY);
     Ok(())
+}
+
+/// Add the Thai Type 3 fonts for every cluster in `glyphs` to `doc`, named `{prefix}0`, … as
+/// [`show_line_as`] named them. Every outline is read before anything is written, so on error
+/// (no Thai face) nothing is added.
+pub fn write_fonts(doc: &mut Document, glyphs: &Glyphs, prefix: &str) -> Result<Vec<(String, ObjRef)>, GlyphError> {
+    let mut outlines: HashMap<u32, GlyphOutline> = HashMap::new();
+    for c in &glyphs.clusters {
+        for (id, _) in &c.glyphs {
+            if !outlines.contains_key(id) {
+                outlines.insert(*id, shaped_glyph(ShapedScript::Thai, *id)?);
+            }
+        }
+    }
+    Ok(glyphs.clusters.chunks(PER_FONT).enumerate().map(|(i, chunk)| (format!("{prefix}{i}"), type3(doc, chunk, &outlines))).collect())
 }
 
 /// Format a number for content streams (up to three decimals).

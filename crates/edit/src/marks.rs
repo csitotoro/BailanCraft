@@ -67,7 +67,8 @@ impl HeaderFooter {
     /// (and a `\r` that would be drawn is refused too). The dialog asks this too, so its preview
     /// never offers text that applying refuses (#2013).
     pub fn first_undrawable(&self) -> Option<char> {
-        self.text.iter().flat_map(|t| t.lines()).find_map(pdfcraft_fonts::first_non_win_ansi)
+        // BailanCraft: Thai is drawn from the Thai face (fonts::thai_draw) when the build has it.
+        self.text.iter().flat_map(|t| t.lines()).find_map(undrawable_line)
     }
 
     /// The room the header and the footer take at the top and the bottom of a page, in points:
@@ -144,7 +145,8 @@ impl Watermark {
     pub fn first_undrawable(&self) -> Option<char> {
         match self.source {
             Some(_) => None,
-            None => self.text.trim().lines().find_map(pdfcraft_fonts::first_non_win_ansi),
+            // BailanCraft: Thai is drawn from the Thai face (fonts::thai_draw) when the build has it.
+            None => self.text.trim().lines().find_map(undrawable_line),
         }
     }
 }
@@ -318,5 +320,16 @@ mod expand_tests {
         assert_eq!(expand("<<<1>>>", 3, 9, 1, &cx), "<3>");
         assert_eq!(expand("<< <<1>>", 3, 9, 1, &cx), "<< 3");
         assert_eq!(expand("<<x>> <<1>>", 3, 9, 1, &cx), "<<x>> 3");
+    }
+}
+
+/// BailanCraft: the first character of `line` a header, footer or watermark can't draw: outside
+/// WinAnsi, unless it is Thai the build's Thai face draws.
+fn undrawable_line(line: &str) -> Option<char> {
+    use pdfcraft_fonts::thai_draw;
+    if thai_draw::available() && thai_draw::has_thai(line) {
+        thai_draw::first_undrawable(line, pdfcraft_fonts::win_ansi_encodable)
+    } else {
+        pdfcraft_fonts::first_non_win_ansi(line)
     }
 }

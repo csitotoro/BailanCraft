@@ -10726,3 +10726,54 @@ fn review_inside_scope_group_move_matches_direct_transform_under_outer_scale() {
         }
     }
 }
+
+/// BailanCraft: Thai headers, footers and watermarks are drawn from the Thai face in Type 3
+/// fonts named in each page's resources, one set shared by every page; before, they were
+/// refused ("only Western European characters"). Header fonts and watermark fonts have their
+/// own names, so both marks on a page keep their glyphs. Text extraction gives the Thai back.
+#[test]
+fn thai_headers_footers_and_watermarks() {
+    if !pdfcraft_fonts::thai_draw::available() {
+        return;
+    }
+    let mut doc = fixture();
+    let hf = HeaderFooter {
+        text: ["บริษัท ตัวอย่าง จำกัด".into(), String::new(), "หน้า <<1>> จาก <<n>>".into(), String::new(), "เอกสารลับ ห้ามเผยแพร่".into(), String::new()],
+        ..HeaderFooter::default()
+    };
+    assert_eq!(hf.first_undrawable(), None);
+    add_header_footer(&mut doc, &[0, 1, 2], &hf, false, &cx()).unwrap();
+    let wm = Watermark { text: "สำเนาถูกต้อง".into(), ..Watermark::default() };
+    assert_eq!(wm.first_undrawable(), None);
+    add_watermark(&mut doc, &[0, 2], &wm, false).unwrap();
+    let doc = reopen(&doc);
+    let header = streams(&doc, 0).into_iter().find(|s| s.contains("/PCMark /HeaderFooter")).unwrap();
+    assert!(header.contains("/BCThHF0 8 Tf") && header.contains("( 1 ) Tj") && !header.contains('?'), "{header}");
+    let mark = streams(&doc, 0).into_iter().find(|s| s.contains("/PCMark /Watermark")).unwrap();
+    assert!(mark.contains("/BCThWM0 ") && !mark.contains('?'), "{mark}");
+    // Each page names the shared fonts; header and watermark fonts differ.
+    let font_ref = |page: usize, name: &[u8]| {
+        let p = &pdfcraft_model::pages(&doc)[page];
+        let res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap();
+        let fonts = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap();
+        fonts.reference(name)
+    };
+    let hf0 = font_ref(0, b"BCThHF0").expect("header font on page 1");
+    assert_eq!(font_ref(2, b"BCThHF0"), Some(hf0), "one font for every page");
+    assert_ne!(font_ref(0, b"BCThWM0"), Some(hf0));
+    assert!(font_ref(1, b"BCThWM0").is_none(), "no watermark on page 2");
+    // The text comes back as Thai (the Type 3 fonts' ToUnicode). Edit text's reading blocks split
+    // a line where the font changes, so "หน้า 1 จาก 3" comes back in pieces here; copy and
+    // search (pdfcraft-render's page text) keep it on one line, checked end to end with the CLI.
+    let text: String = text::reading_blocks(&doc, 0).unwrap().into_iter().map(|b| b.text).collect::<Vec<_>>().join("\n");
+    for words in ["บริษัท ตัวอย่าง จำกัด", "หน้า", "จาก", "เอกสารลับ ห้ามเผยแพร่", "สำเนาถูกต้อง"]
+    {
+        assert!(text.contains(words), "{words} in {text}");
+    }
+    // Text neither font draws is still refused.
+    let bad = HeaderFooter {
+        text: ["ไทย 日".into(), String::new(), String::new(), String::new(), String::new(), String::new()],
+        ..HeaderFooter::default()
+    };
+    assert_eq!(bad.first_undrawable(), Some('日'));
+}
