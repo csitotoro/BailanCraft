@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- BailanCraft: the Windows installer (WiX v5), built by bailancraft-package.ps1.
+
+     Simpler than upstream's pdfcraft.wxs: one per-machine install in
+     Program Files\BailanCraft (no per-user scope choice, no migration from older PdfCraft
+     releases), its own UpgradeCode, registry keys and shortcut names so it sits beside an
+     installed PdfCraft without touching it, and Tesseract with English and Thai language data
+     in tesseract\ for Thai OCR (crates/ocr: `tesseract::bundled`). -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef HasCraftFontLicences ?>
+  <?define HasCraftFontLicences=0 ?>
+  <?endif?>
+  <Package Name="BailanCraft" Manufacturer="$(var.Manufacturer)" Version="$(var.Version)" UpgradeCode="380232C5-9034-4CB0-AA36-C698030C94CF" Scope="perMachine" Compressed="yes" Language="1033">
+    <SummaryInformation Description="BailanCraft PDF workbench" Manufacturer="$(var.Manufacturer)" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of BailanCraft is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="BailancraftIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="BailancraftIcon.ico" />
+    <Property Id="ARPCOMMENTS" Value="PDF reader and editor with Thai support, based on PdfCraft (MIT OR Apache-2.0)" />
+
+    <!-- Desktop shortcut and "Edit with BailanCraft" in the PDF context menu: on unless
+         INSTALLDESKTOPSHORTCUT=0 / INSTALLPDFCONTEXTMENU=0 is given (checkboxes in the welcome
+         dialog). Secure, so the dialog's choice reaches the elevated install. -->
+    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" Secure="yes" />
+    <Property Id="INSTALLPDFCONTEXTMENU" Value="1" Secure="yes" />
+    <UIRef Id="BailancraftInstallerUI" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="BailanCraft">
+        <Directory Id="ModelsFolder" Name="models" />
+        <Directory Id="TesseractFolder" Name="tesseract" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="BailanCraft" Level="1">
+      <?if $(var.HasCraftFontLicences) = 1 ?>
+      <ComponentGroupRef Id="CraftFontLicences" />
+      <?endif?>
+      <ComponentGroupRef Id="BailancraftFiles" />
+      <ComponentGroupRef Id="BailancraftModels" />
+      <ComponentGroupRef Id="BailancraftTesseract" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <?if $(var.HasCraftFontLicences) = 1 ?>
+    <ComponentGroup Id="CraftFontLicences" Directory="INSTALLFOLDER" Subdirectory="font-licences">
+      <Files Include="$(var.DocsDir)\**" />
+    </ComponentGroup>
+    <?endif?>
+    <ComponentGroup Id="BailancraftFiles" Directory="INSTALLFOLDER">
+      <Component Id="BailancraftApp" Guid="DD9B9871-6F64-491A-924F-DB1932021F88">
+        <File Id="BailancraftExe" Source="$(var.BinDir)\BailanCraft.exe" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\BailanCraft.exe" Value="[#BailancraftExe]" Type="string" />
+        <!-- Offered under "Open with" and in Settings > Default apps; never takes over .pdf's
+             existing default (the user chooses). Icon resource 2 is the PDF document icon. -->
+        <RegistryValue Root="HKLM" Key="Software\Classes\BailanCraft.Document" Value="PDF Document" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\BailanCraft.Document" Name="TypeOverlay" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\BailanCraft.Document\DefaultIcon" Value="&quot;[#BailancraftExe]&quot;,-2" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\BailanCraft.Document\shell\open\command" Value="&quot;[#BailancraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="BailanCraft.Document" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\BailanCraft.exe" Name="FriendlyAppName" Value="BailanCraft" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\BailanCraft.exe\DefaultIcon" Value="&quot;[#BailancraftExe]&quot;,-2" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\BailanCraft.exe\SupportedTypes" Name=".pdf" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\BailanCraft.exe\shell\open\command" Value="&quot;[#BailancraftExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft\Capabilities" Name="ApplicationName" Value="BailanCraft" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft\Capabilities" Name="ApplicationDescription" Value="PDF reader and editor with Thai support" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft\Capabilities" Name="ApplicationIcon" Value="[#BailancraftExe],0" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft\Capabilities\FileAssociations" Name=".pdf" Value="BailanCraft.Document" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\RegisteredApplications" Name="BailanCraft" Value="Software\BailanCraft\Capabilities" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" />
+      </Component>
+
+      <!-- Plain (not advertised) shortcuts, each with its own component and an HKLM key path. -->
+      <Component Id="BailancraftStartMenuShortcut" Directory="ProgramMenuFolder" Guid="4FDFFD25-0D72-4A5E-8637-00CD65DB6627">
+        <Shortcut Id="StartMenuShortcut" Name="BailanCraft" Description="BailanCraft PDF workbench" Target="[#BailancraftExe]" WorkingDirectory="INSTALLFOLDER" Icon="BailancraftIcon.ico" IconIndex="0" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft\Shortcuts" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="BailancraftDesktopShortcut" Directory="DesktopFolder" Guid="8ADCADD9-E007-4A26-BF0F-31A140E93E56" Condition="INSTALLDESKTOPSHORTCUT = 1">
+        <Shortcut Id="DesktopShortcut" Name="BailanCraft" Description="BailanCraft PDF workbench" Target="[#BailancraftExe]" WorkingDirectory="INSTALLFOLDER" Icon="BailancraftIcon.ico" IconIndex="0" />
+        <RegistryValue Root="HKLM" Key="Software\BailanCraft\Shortcuts" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <!-- "Edit with BailanCraft" on PDF files, whichever app is .pdf's default. -->
+      <Component Id="BailancraftPdfContextMenu" Guid="CCE821F6-0C50-4684-9F52-08A4A8DB903F" Condition="INSTALLPDFCONTEXTMENU = 1">
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\BailanCraft.Edit" Value="Edit with BailanCraft" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\BailanCraft.Edit" Name="Icon" Value="&quot;[#BailancraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\BailanCraft.Edit" Name="MultiSelectModel" Value="Document" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\BailanCraft.Edit\command" Value="&quot;[#BailancraftExe]&quot; &quot;%1&quot;" Type="string" />
+      </Component>
+
+      <Component Id="BailancraftCli">
+        <File Id="BailancraftCliExe" Source="$(var.BinDir)\bailancraft-cli.exe" KeyPath="yes" />
+      </Component>
+      <!-- Licences and notices travel with the binaries. -->
+      <Component Id="BailancraftDocumentIconLicense">
+        <File Id="BailancraftDocumentIconLicenseFile" Source="$(var.BinDir)\LICENSE-document.txt" KeyPath="yes" />
+      </Component>
+      <Component Id="BailancraftMitLicense">
+        <File Id="BailancraftMitLicenseFile" Source="$(var.BinDir)\LICENSE-MIT" KeyPath="yes" />
+      </Component>
+      <Component Id="BailancraftApacheLicense">
+        <File Id="BailancraftApacheLicenseFile" Source="$(var.BinDir)\LICENSE-APACHE" KeyPath="yes" />
+      </Component>
+      <Component Id="BailancraftNotice">
+        <File Id="BailancraftNoticeFile" Source="$(var.BinDir)\NOTICE" KeyPath="yes" />
+      </Component>
+      <Component Id="BailancraftReadme">
+        <File Id="BailancraftReadmeFile" Source="$(var.BinDir)\README.md" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- OCR models for Latin text (ocrs), with their licences, in models\ beside the app. -->
+    <ComponentGroup Id="BailancraftModels" Directory="ModelsFolder">
+      <Files Include="$(var.ModelsDir)\*" />
+    </ComponentGroup>
+
+    <!-- Tesseract (Apache-2.0, UB Mannheim build) with only the DLLs tesseract.exe loads, its
+         language data (eng, tha, osd) and configs in tessdata\, and the licences of every
+         bundled library in licences\. -->
+    <ComponentGroup Id="BailancraftTesseract" Directory="TesseractFolder">
+      <Files Include="$(var.TesseractDir)\**" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>

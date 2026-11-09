@@ -42,6 +42,8 @@ pub const LANGUAGE_CODES: &[(&str, &str)] = &[
     ("ko", "kor"),
     ("ar", "ara"),
     ("nl", "nld"),
+    // BailanCraft: Thai (tha.traineddata, bundled with the Windows installer).
+    ("th", "tha"),
 ];
 
 /// English names for [`LANGUAGE_CODES`] (dropdowns show code + name).
@@ -58,6 +60,7 @@ pub const LANGUAGE_NAMES: &[(&str, &str)] = &[
     ("ko", "Korean"),
     ("ar", "Arabic"),
     ("nl", "Dutch"),
+    ("th", "Thai"),
 ];
 
 /// Map a settings language code to a Tesseract one: trimmed, case-insensitive, allow-listed;
@@ -92,7 +95,23 @@ fn locate(configured: Option<std::ffi::OsString>, search: impl FnOnce() -> Optio
 /// directory, which is neither stable nor a safe place to find a program. Also named by
 /// `ocr_status` (the engine reports where it would look, without probing).
 pub fn path_search() -> Option<PathBuf> {
-    path_search_in(std::env::split_paths(&std::env::var_os("PATH")?))
+    // BailanCraft: the Tesseract the installer ships beside the app comes first.
+    bundled().or_else(|| path_search_in(std::env::split_paths(&std::env::var_os("PATH")?)))
+}
+
+/// BailanCraft: the Tesseract the Windows installer puts beside the app,
+/// `<app dir>\tesseract\tesseract.exe`, with its language data in `tesseract\tessdata`
+/// (English and Thai). The app's own folder (Program Files, or a portable copy's) is as
+/// trusted as the app itself; nothing here comes from a document.
+pub fn bundled() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.join("tesseract");
+    program_file_names().iter().map(|name| dir.join(name)).find(|p| program_is_executable(p))
+}
+
+/// BailanCraft: the `tessdata` folder of `program` when it is the [`bundled`] Tesseract.
+fn bundled_tessdata(program: &Path) -> Option<PathBuf> {
+    let data = program.parent()?.join("tessdata");
+    (bundled().as_deref() == Some(program) && data.is_dir()).then_some(data)
 }
 
 /// [`path_search`] over an explicit directory list (so tests can pass one).
@@ -359,6 +378,9 @@ impl TesseractCli {
                 }))
                 .env("TMP", &dir.path)
                 .env("TEMP", &dir.path)
+                // BailanCraft: the bundled Tesseract reads its own language data, whatever
+                // TESSDATA_PREFIX an installed copy elsewhere set for the user.
+                .envs(bundled_tessdata(&self.program).map(|d| ("TESSDATA_PREFIX", d)))
                 .spawn()
                 .map_err(|e| OcrError::NoTesseract(format!("{} could not start: {e}", self.program.display())))?;
         let started = Instant::now();
@@ -471,14 +493,95 @@ impl Recognizer for TesseractCli {
             set_private(&mut f);
             f.write_all(&png).map_err(|e| OcrError::Process(format!("writing the image failed: {e}")))?;
         }
+        // BailanCraft: Thai is read with the Thai data alone. "tha+eng" reads English words
+        // right but turns short Thai words into Latin letters ("ใจดี" → "ad"), and Thai text is
+        // what this fork must get right; English words in a Thai page may come out wrong.
         // Fixed argv, no shell: tesseract <png> stdout -l <lang> tsv.
         let tsv = self.run(&[&png_path.to_string_lossy(), "stdout", "-l", lang, "tsv"], self.timeout, self.max_output)?;
-        let (lines, truncated) = parse_tsv_bounded(&tsv);
+        let (mut lines, truncated) = parse_tsv_bounded(&tsv);
         if truncated {
             return Err(OcrError::Recognize(format!("the {MAX_WORDS}-word limit was exceeded; the incomplete reading was rejected")));
         }
+        if lang.starts_with("tha") {
+            for line in &mut lines {
+                compose_sara_am(&mut line.words);
+                join_thai_fragments(&mut line.words);
+            }
+        }
         Ok(lines)
     }
+}
+
+/// BailanCraft: Tesseract's Thai data writes Sara Am as nikhahit + sara aa (ํ + า, U+0E4D U+0E32),
+/// which looks the same but never matches a search for "คำ" typed as ำ (U+0E33). Compose it,
+/// also when a tone mark sits between them (น ้ ํ า → น ้ ำ).
+pub fn normalize_thai(text: &str) -> String {
+    text.replace("\u{0E4D}\u{0E32}", "\u{0E33}")
+        .replace("\u{0E4D}\u{0E48}\u{0E32}", "\u{0E48}\u{0E33}")
+        .replace("\u{0E4D}\u{0E49}\u{0E32}", "\u{0E49}\u{0E33}")
+        .replace("\u{0E4D}\u{0E4A}\u{0E32}", "\u{0E4A}\u{0E33}")
+        .replace("\u{0E4D}\u{0E4B}\u{0E32}", "\u{0E4B}\u{0E33}")
+}
+
+/// BailanCraft: [`normalize_thai`] over a line's words, also where Tesseract puts nikhahit and
+/// sara aa in two words (it splits Thai into very short words): the nikhahit's word gets ำ, the
+/// next word loses its leading า, and a word left empty is removed (its box joins the first).
+fn compose_sara_am(words: &mut Vec<super::Word>) {
+    for w in words.iter_mut() {
+        w.text = normalize_thai(&w.text);
+    }
+    let mut i = 0;
+    while i + 1 < words.len() {
+        let ends_with_nikhahit = words.get(i).is_some_and(|w| w.text.ends_with('\u{0E4D}'));
+        let next_starts_with_aa = words.get(i + 1).is_some_and(|w| w.text.starts_with('\u{0E32}'));
+        if ends_with_nikhahit && next_starts_with_aa {
+            let next_rect = words.get(i + 1).map(|w| w.rect);
+            if let Some(w) = words.get_mut(i) {
+                w.text.pop();
+                w.text.push('\u{0E33}');
+                w.text = normalize_thai(&w.text);
+            }
+            let emptied = words.get_mut(i + 1).is_some_and(|n| {
+                n.text.remove(0);
+                n.text.is_empty()
+            });
+            if emptied {
+                if let (Some(w), Some(r)) = (words.get_mut(i), next_rect) {
+                    w.rect = [w.rect[0].min(r[0]), w.rect[1].min(r[1]), w.rect[2].max(r[2]), w.rect[3].max(r[3])];
+                }
+                words.remove(i + 1);
+            }
+        }
+        i += 1;
+    }
+}
+
+/// BailanCraft: Tesseract splits Thai (written without spaces) into very short "words", a letter
+/// or two each, whose boxes overlap where a vowel is written before its consonant (โ, เ, แ). Laid
+/// out as separate words, the text layer then reads back in box order, not reading order
+/// ("ถนนพหลโยธิน" → "ถพนหลโนยธิน"), and with spaces inside words. Fragments of Thai that touch
+/// (a gap under a third of the line's height) become one word, in Tesseract's reading order,
+/// with the union of their boxes and the lowest confidence; real gaps stay word breaks.
+fn join_thai_fragments(words: &mut Vec<super::Word>) {
+    let thai = |w: &super::Word| w.text.chars().any(|c| matches!(u32::from(c), 0x0E00..=0x0E7F));
+    let mut out: Vec<super::Word> = Vec::with_capacity(words.len());
+    for w in words.drain(..) {
+        if let Some(prev) = out.last_mut() {
+            let height = (prev.rect[3] - prev.rect[1]).max(w.rect[3] - w.rect[1]).max(1.0);
+            let gap = w.rect[0] - prev.rect[2];
+            if thai(prev) && thai(&w) && gap < height / 3.0 {
+                prev.text.push_str(&w.text);
+                prev.rect = [prev.rect[0].min(w.rect[0]), prev.rect[1].min(w.rect[1]), prev.rect[2].max(w.rect[2]), prev.rect[3].max(w.rect[3])];
+                prev.confidence = match (prev.confidence, w.confidence) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                continue;
+            }
+        }
+        out.push(w);
+    }
+    *words = out;
 }
 
 /// Encode an RGBA raster as PNG (the interchange format Tesseract reads best).
@@ -672,6 +775,10 @@ mod tests {
         assert_eq!(language_code("en"), "eng");
         assert_eq!(language_code(" EN "), "eng", "trimmed, case-insensitive");
         assert_eq!(language_code("de"), "deu");
+        // BailanCraft: Thai is allow-listed and named.
+        assert_eq!(language_code("th"), "tha");
+        assert_eq!(language_code(" TH "), "tha");
+        assert!(LANGUAGE_NAMES.contains(&("th", "Thai")));
         assert_eq!(language_code("ZH"), "chi_sim");
         assert_eq!(language_code("ja"), "jpn");
         assert_eq!(language_code("ko"), "kor");
@@ -1018,5 +1125,71 @@ mod process_tests {
         assert!(matches!(err, OcrError::OutputTooLarge(_)), "{err}");
         assert!(started.elapsed() < Duration::from_secs(30), "killed at the cap, not at the timeout");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// BailanCraft: the bundled Tesseract lives in a `tesseract` folder beside the running
+/// executable; without one (as in a test binary's folder) there is none, and only a bundled
+/// program gets the bundled language data.
+#[cfg(test)]
+mod bailancraft_bundled {
+    use super::*;
+
+    #[test]
+    fn bundled_is_beside_the_executable_or_absent() {
+        let beside = std::env::current_exe().unwrap().parent().unwrap().join("tesseract");
+        match bundled() {
+            Some(p) => assert!(p.starts_with(&beside), "{}", p.display()),
+            None => assert!(!beside.join(program_file_names()[0]).is_file()),
+        }
+        assert_eq!(bundled_tessdata(Path::new(r"C:\Program Files\Tesseract-OCR\tesseract.exe")), None, "not the bundled one");
+    }
+}
+
+/// BailanCraft: Sara Am read as nikhahit + sara aa is composed, with or without a tone mark.
+#[cfg(test)]
+mod bailancraft_thai_text {
+    #[test]
+    fn sara_am_is_composed() {
+        use super::normalize_thai;
+        assert_eq!(normalize_thai("ค\u{0E4D}\u{0E32}"), "คำ");
+        assert_eq!(normalize_thai("น\u{0E4D}\u{0E49}\u{0E32}"), "น้ำ");
+        assert_eq!(normalize_thai("น\u{0E49}\u{0E4D}\u{0E32}"), "น้ำ");
+        assert_eq!(normalize_thai("ต\u{0E4D}\u{0E48}\u{0E32}"), "ต่ำ");
+        assert_eq!(normalize_thai("ภาษาไทย English"), "ภาษาไทย English");
+        assert_eq!(normalize_thai(""), "");
+    }
+
+    #[test]
+    fn sara_am_split_across_words_is_composed() {
+        use crate::Word;
+        let w = |t: &str, x: f32| Word::new(t, [x, 0.0, x + 10.0, 10.0], "Tesseract");
+        // "คํ" + "า" + "ถาม": the า word disappears and its box joins คำ.
+        let mut words = vec![w("ค\u{0E4D}", 0.0), w("\u{0E32}", 10.0), w("ถาม", 20.0)];
+        super::compose_sara_am(&mut words);
+        assert_eq!(words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["คำ", "ถาม"]);
+        assert_eq!(words[0].rect, [0.0, 0.0, 20.0, 10.0]);
+        // With a tone mark, and a following word that keeps the rest of its text.
+        let mut words = vec![w("น\u{0E49}\u{0E4D}", 0.0), w("\u{0E32}ตาล", 10.0)];
+        super::compose_sara_am(&mut words);
+        assert_eq!(words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["น้ำ", "ตาล"]);
+        let mut none: Vec<Word> = Vec::new();
+        super::compose_sara_am(&mut none);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn touching_thai_fragments_join_in_reading_order() {
+        use crate::Word;
+        let w = |t: &str, l: f32, r: f32| Word::new(t, [l, 0.0, r, 30.0], "Tesseract").with_confidence(90.0);
+        // ถนน พหล โย ธิน, with โ's box starting left of ห's end; then a real gap and "Tel".
+        let mut words = vec![w("ถนน", 0.0, 60.0), w("พหล", 62.0, 120.0), w("โย", 115.0, 150.0), w("ธิน", 152.0, 190.0), w("Tel", 240.0, 280.0)];
+        super::join_thai_fragments(&mut words);
+        assert_eq!(words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["ถนนพหลโยธิน", "Tel"]);
+        assert_eq!(words[0].rect, [0.0, 0.0, 190.0, 30.0]);
+        // A gap of a third of the height or more is a word break.
+        let mut words = vec![w("ชื่อ", 0.0, 40.0), w("สมชาย", 60.0, 120.0)];
+        super::join_thai_fragments(&mut words);
+        assert_eq!(words.len(), 2);
     }
 }

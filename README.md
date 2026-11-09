@@ -12,10 +12,12 @@ A PDF reader and editor with first-class Thai support, forked from
 |---|---|
 | เมนูภาษาไทย, เพิ่มข้อความไทย, copy/ค้นหาข้อความไทย | ใช้ได้ (มาจาก PdfCraft) |
 | ชื่อ/โฟลเดอร์ค่าตั้งแยกจาก PdfCraft, ปิดตัวเช็กอัปเดตของต้นฉบับ | ทำแล้ว |
-| ไอคอนและธีมใบลาน | กำลังออกแบบ (ตอนนี้ยังใช้ไอคอนของต้นฉบับ) |
-| ตัดคำไทยตามพจนานุกรม | ยังไม่ทำ (ตอนนี้ตัดกลางคำได้) |
-| OCR ไทย, ภาษาไทยในฟอร์มและ Fill & Sign | ยังไม่ทำ |
-| ตัวติดตั้ง Windows | ยังไม่ทำ |
+| ไอคอนมัดใบลาน, ธีมใบลานธรรมชาติ / ประกับไม้ | ทำแล้ว |
+| ตัดคำไทยตามพจนานุกรม (PDF และหน้าจอ) | ทำแล้ว |
+| ภาษาไทยในฟอร์ม, Fill & Sign, หัว/ท้ายกระดาษ, ลายน้ำ, ตรายาง | ทำแล้ว (มีชุดตรายางภาษาไทย 12 แบบ) |
+| OCR ภาษาไทย | ทำแล้ว (Tesseract + tha.traineddata มากับตัวติดตั้ง) |
+| ตัวติดตั้ง Windows (.msi) และแบบพกพา (.zip) | ทำแล้ว: `packaging/windows/bailancraft-package.ps1` |
+| ลายเซ็นแบบพิมพ์ชื่อภาษาไทย | ยังไม่ทำ (ต้องหาฟอนต์ลายมือไทย) |
 
 ## Build (Windows)
 
@@ -38,3 +40,17 @@ CRAFT_FONTS_DIR=../craft-fonts CRAFT_I18N_DIR=../craft-i18n cargo build --releas
 MIT OR Apache-2.0 เหมือนต้นฉบับ (`LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`, `ATTRIBUTION.md`)
 ชื่อและโลโก้ ArtCraft เป็นเครื่องหมายการค้าของ ArtCraft Team และไม่ได้รวมอยู่ใน BailanCraft
 README เดิมของ PdfCraft อยู่ที่ [docs/UPSTREAM-README.md](docs/UPSTREAM-README.md)
+
+## สร้างตัวติดตั้ง Windows
+
+ต้องมี WiX v5 (`dotnet tool install --global wix --version 5.0.2`), Tesseract
+(`winget install UB-Mannheim.TesseractOCR`) และ `tha.traineddata`, `eng.traineddata` จาก
+[tessdata_best](https://github.com/tesseract-ocr/tessdata_best) ใน `..\BailanCraft-deps\tessdata`
+
+```powershell
+$env:CRAFT_FONTS_DIR = '..\craft-fonts'; $env:CRAFT_I18N_DIR = '..\craft-i18n'
+powershell -ExecutionPolicy Bypass -File packaging\windows\bailancraft-package.ps1 -Manufacturer 'ชื่อบริษัท'
+```
+
+ได้ `dist\bailancraft\bailancraft-<version>-windows-x64.msi` และไฟล์ `-portable.zip`
+การเซ็นโค้ดดูที่ [docs/bailancraft-code-signing.md](docs/bailancraft-code-signing.md)

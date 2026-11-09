@@ -504,6 +504,15 @@ fn configured_tesseract(settings: &OcrSettings) -> Option<String> {
 /// asks for. "Automatic" is an ensemble when both engines are available; a named engine that
 /// cannot start fails with its cause named.
 pub fn recognizers(settings: &OcrSettings) -> Result<Recognizers, String> {
+    // BailanCraft: the ocrs models read only unaccented Latin, so Thai goes to Tesseract
+    // (bundled with the Windows installer) whatever engine is chosen.
+    let thai_only;
+    let settings = if settings.language.trim().eq_ignore_ascii_case("th") && settings.engine != EngineChoice::Tesseract {
+        thai_only = OcrSettings { engine: EngineChoice::Tesseract, ..settings.clone() };
+        &thai_only
+    } else {
+        settings
+    };
     // The Tesseract probe (a `--list-langs` process) runs before any static mutex is taken, so
     // recognition on other threads is never blocked behind someone's discovery. A job that
     // names its engines never starts it: only Tesseract and Automatic read anything from it,

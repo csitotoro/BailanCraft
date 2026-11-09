@@ -26,8 +26,10 @@ fn checked_len(width: u32, height: u32) -> Result<usize, OcrError> {
     pixels.checked_mul(4).ok_or(OcrError::ImageTooLarge)
 }
 
-/// The languages the models read (ISO 639-1); all use the Latin alphabet without accents.
-pub const LANGUAGES: &[(&str, &str)] = &[("en", "English")];
+/// The languages offered for OCR (ISO 639-1). The ocrs models read only the Latin alphabet
+/// without accents (English); BailanCraft: Thai is read by Tesseract (`tha`), which the engine
+/// picks for it whatever engine is chosen (`pdfcraft_engine::ocr::recognizers`).
+pub const LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("th", "ไทย (Thai)")];
 
 /// The model files, as named in ATTRIBUTION.toml.
 pub const DETECTION_MODEL: &str = "text-detection.onnx";
@@ -163,7 +165,8 @@ impl Recognizer for OcrsRecognizer {
     }
 
     fn languages(&self) -> Vec<(String, String)> {
-        LANGUAGES.iter().map(|(c, n)| ((*c).to_string(), (*n).to_string())).collect()
+        // BailanCraft: the models read Latin only; Thai in LANGUAGES is Tesseract's.
+        LANGUAGES.iter().filter(|(c, _)| *c == "en").map(|(c, n)| ((*c).to_string(), (*n).to_string())).collect()
     }
 
     fn recognize(&self, image: &OcrImage, _options: &RecognizeOptions) -> Result<Vec<Line>, OcrError> {

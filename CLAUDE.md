@@ -36,6 +36,17 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   (steps are `{"tool": ..., "args": {...}, "out": "x.png"}`; `pdfcraft-cli tools` lists tools).
 - Thai test script and outputs live outside the repo in `../BailanCraft-test/`.
 
+## Windows installer
+- `packaging/windows/bailancraft-package.ps1` builds `dist/bailancraft/*.msi` and a portable zip
+  (crt-static build for x86_64-pc-windows-msvc, about 30 min cold). The MSI source is
+  `bailancraft.wxs` + `bailancraft-ui.wxs` (per-machine, `Program Files/BailanCraft`, own
+  UpgradeCode); upstream `pdfcraft.wxs`/`package.ps1` are left as they are. The exe is renamed
+  `BailanCraft.exe` only at staging. Inputs outside the repo: Tesseract in Program Files
+  (UB Mannheim, winget), `../BailanCraft-deps/tessdata/{tha,eng}.traineddata` (tessdata_best),
+  OCR models (default: an installed PdfCraft's `models`). Signing: `bailancraft-sign.ps1`,
+  `docs/bailancraft-code-signing.md`. Bundled DLL licences: `tesseract-THIRD-PARTY.txt`
+  (includes LGPL libiconv).
+
 ## Engineering rules kept from upstream
 - Never panic on input: no `unwrap`/`expect`/indexing on input-derived data in non-test code,
   checked arithmetic, char-boundary slicing, capped allocations, handle lock poisoning, no `unsafe`.
@@ -50,7 +61,10 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   (`crates/edit/src/linebreak.rs`, `added/layout.rs`) and interface text
   (`crates/ui-egui/src/thai_breaks.rs`). The per-character rule in `text_regions/styled.rs`
   (`linebreak::between`) still can't see Thai words.
-- OCR has no Thai (ocrs models are Latin-only; Tesseract allow-list lacks `tha`, `crates/ocr`).
+- Thai OCR goes through Tesseract (`tha` allow-listed); `engine::ocr::recognizers` sends Thai
+  to Tesseract whatever engine is chosen, since the ocrs models are Latin-only. The installer
+  bundles Tesseract in `<app dir>/tesseract/` (`ocr::tesseract::bundled`, searched before PATH,
+  with its own TESSDATA_PREFIX).
 - Form field values and text box / Fill & Sign text draw Thai through `pdfcraft_fonts::thai_draw`
   (shaped clusters in Type 3 fonts `BCTh0…`; builders record lines under `PCThaiLines`, and
   whoever stores the stream calls `thai_draw::materialize`). Headers/footers (`BCThHF…`),

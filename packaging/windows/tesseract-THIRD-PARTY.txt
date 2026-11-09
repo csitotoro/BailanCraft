@@ -1,0 +1,49 @@
+Third-party software in BailanCraft's tesseract\ folder
+=====================================================
+
+BailanCraft bundles Tesseract OCR so it can recognise Thai text. Tesseract runs as a separate
+program (tesseract.exe); BailanCraft does not link to it. These files come unmodified from the
+UB Mannheim build of Tesseract for Windows (https://github.com/UB-Mannheim/tesseract), version
+5.4.0.20240606; only the DLLs tesseract.exe loads are included.
+
+Tesseract OCR ............ Apache License 2.0 (licences\Tesseract-LICENSE, Tesseract-AUTHORS)
+                           https://github.com/tesseract-ocr/tesseract
+Language data ............ Apache License 2.0 (licences\tessdata-LICENSE)
+  tessdata\tha.traineddata, tessdata\eng.traineddata: tesseract-ocr/tessdata_best
+  tessdata\osd.traineddata, tessdata\configs, tessdata\tessconfigs: the UB Mannheim build
+
+Libraries (DLLs) loaded by tesseract.exe, with their licences:
+  libtesseract-5.dll ..... Apache-2.0
+  libleptonica-6.dll ..... BSD-2-Clause (Leptonica, http://www.leptonica.org)
+  libarchive-13.dll ...... BSD-2-Clause (https://libarchive.org)
+  libb2-1.dll ............ CC0-1.0 / Apache-2.0 (BLAKE2)
+  libbz2-1.dll ........... bzip2 licence (BSD-style)
+  libcrypto-3-x64.dll .... Apache-2.0 (OpenSSL 3)
+  libdeflate.dll ......... MIT
+  libexpat-1.dll ......... MIT
+  libgif-7.dll ........... MIT (giflib)
+  libjbig-0.dll .......... Apache-2.0 (JBIG-KIT 2.1+)
+  libjpeg-8.dll .......... IJG licence / BSD-3-Clause / zlib (libjpeg-turbo)
+  libLerc.dll ............ Apache-2.0 (Esri LERC)
+  liblz4.dll ............. BSD-2-Clause
+  liblzma-5.dll .......... 0BSD / public domain (XZ Utils)
+  libopenjp2-7.dll ....... BSD-2-Clause (OpenJPEG)
+  libpng16-16.dll ........ libpng licence (zlib-style)
+  libsharpyuv-0.dll ...... BSD-3-Clause (libwebp)
+  libtiff-6.dll .......... libtiff licence (BSD-style)
+  libwebp-7.dll .......... BSD-3-Clause
+  libwebpmux-3.dll ....... BSD-3-Clause
+  libzstd.dll ............ BSD-3-Clause
+  zlib1.dll .............. zlib licence
+  libgcc_s_seh-1.dll ..... GPL-3.0 with the GCC Runtime Library Exception
+  libstdc++-6.dll ........ GPL-3.0 with the GCC Runtime Library Exception
+  libwinpthread-1.dll .... MIT / BSD-3-Clause (MinGW-w64)
+  libiconv-2.dll ......... LGPL-2.1-or-later (GNU libiconv)
+
+libiconv is under the GNU Lesser General Public License, version 2.1 or later
+(https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). It is a separate, unmodified DLL that
+you may replace with your own build. Its source code is available from
+https://ftp.gnu.org/pub/gnu/libiconv/ and, as built for this package, from the MSYS2 project
+(https://github.com/msys2/MINGW-packages, package mingw-w64-x86_64-libiconv).
+The GCC runtime libraries are distributed under the GCC Runtime Library Exception, which allows
+their redistribution with programs built by GCC.
