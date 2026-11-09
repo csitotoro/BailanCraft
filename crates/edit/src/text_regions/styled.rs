@@ -1011,7 +1011,8 @@ pub(crate) fn rewrite_styled_block(
             source.origin.state.word_spacing,
         ) * overrides.get(&item.1).and_then(|r| r.scale).or(style.scale).map_or(source.origin.state.scale, |s| (s / 100.0).clamp(0.1, 10.0))
             * across(source)
-            * calibration.get(&item.1).copied().unwrap_or(1.0)
+            // BailanCraft: the correction fits the source run's own font, not another one standing in.
+            * if item.2 == source.font { calibration.get(&item.1).copied().unwrap_or(1.0) } else { 1.0 }
     };
     let measure = |items: &[(char, usize, String)]| -> Result<f64, EditError> {
         let mut width = 0.0;
@@ -1179,7 +1180,7 @@ pub(crate) fn rewrite_styled_block(
             if let Some(s) = overrides.get(&item.1).and_then(|r| r.scale).or(style.scale) {
                 state.scale = (s / 100.0).clamp(0.1, 10.0);
             }
-            if !shaped_runs.contains_key(&(row_index, pos)) {
+            if !shaped_runs.contains_key(&(row_index, pos)) && item.2 == source.font {
                 state.scale *= calibration.get(&item.1).copied().unwrap_or(1.0);
             }
             if let Some([r, g, b]) = overrides.get(&item.1).and_then(|r| r.color).or(style.color) {

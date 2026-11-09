@@ -10913,3 +10913,35 @@ fn a_lengthened_row_runs_on_rather_than_wrapping_onto_the_text_below() {
     let below = blocks.iter().find(|b| b.editor_text.starts_with("Part twelve")).unwrap();
     assert!(edited.rect[1] > below.rect[3], "the paragraph stays above the next one: {:?} {:?}", edited.rect, below.rect);
 }
+
+#[test]
+fn a_character_another_font_draws_is_not_stretched_to_its_runs_width() {
+    // BailanCraft: a run whose glyphs are placed wider apart than their advances (Word places Thai
+    // glyphs one `Td` at a time) gets a width correction that fits its own font. "24" typed into
+    // such a run was drawn in another font with that correction: stretched to 200 %.
+    let mut doc = text_page(
+        "BT /F2 12 Tf 14 TL 72 700 Td (a) Tj 8 0 Td (b) Tj 8 0 Td (a ) Tj /F1 12 Tf 10 0 Td (12 ) Tj ET \
+         BT /F1 12 Tf 72 686 Td (Second row) Tj ET",
+    );
+    let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    // The subset (F2) has no "9": another font draws it, inside F2's run.
+    let draft = block.editor_text.replacen("ba", "b9a", 1);
+    text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    let content = streams(&doc, 0).join("\n");
+    // Only F2's own glyphs take F2's correction: text shown in any other font is at 100 %.
+    let (mut scale, mut font, mut others) = (100.0_f64, String::new(), 0);
+    for line in content.lines() {
+        if let Some(v) = line.strip_suffix(" Tz").and_then(|v| v.parse::<f64>().ok()) {
+            scale = v;
+        }
+        if let Some(name) = line.strip_suffix(" Tf").and_then(|f| f.split_whitespace().next()) {
+            font = name.to_owned();
+        }
+        if (line.ends_with("Tj") || line.ends_with("TJ")) && font != "/F2" {
+            others += 1;
+            assert!((scale - 100.0).abs() < 0.01, "{font} drawn at {scale} %\n{content}");
+        }
+    }
+    assert!(others > 0, "{content}");
+}
