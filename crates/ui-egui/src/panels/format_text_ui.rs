@@ -202,22 +202,26 @@ pub(crate) fn panel(
                                 ui.separator();
 
                                 let query_lower = query.trim().to_lowercase();
-                                let mut families: std::collections::BTreeMap<&str, Vec<&pdfcraft_engine::text_fonts::FontFile>> =
+                                // BailanCraft: in name order, ignoring a leading "-" or "_" (Thai font packs use them).
+                                let mut families: std::collections::BTreeMap<(String, &str), Vec<&pdfcraft_engine::text_fonts::FontFile>> =
                                     std::collections::BTreeMap::new();
                                 for font in &list {
                                     if query_lower.is_empty()
                                         || font.family.to_lowercase().contains(&query_lower)
                                         || font.face.to_lowercase().contains(&query_lower)
                                     {
-                                        families.entry(&font.family).or_default().push(font);
+                                        let order = font.family.trim_start_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+                                        families.entry((order, &font.family)).or_default().push(font);
                                     }
                                 }
 
                                 if families.is_empty() {
                                     ui.label(tl!("No openly licensed document fonts found. Load a font file."));
                                 } else {
-                                    egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
-                                        for (family, faces) in families {
+                                    // BailanCraft: tall enough to browse from the start; the menu keeps the size of
+                                    // its first frame, drawn while the fonts were still being found.
+                                    egui::ScrollArea::vertical().max_height(350.0).min_scrolled_height(300.0).show(ui, |ui| {
+                                        for ((_, family), faces) in families {
                                             if faces.len() == 1 {
                                                 if let Some(&font) = faces.first() {
                                                     let label =
