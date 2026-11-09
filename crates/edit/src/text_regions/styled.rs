@@ -138,19 +138,30 @@ impl CharacterPreparation<'_> {
         let mut substituted = None;
         let mut fallback = FallbackBuilder::new(max_glyphs);
         let mut resolver = FontResolver { doc, fonts, metrics, full_faces: HashMap::new(), programs: HashMap::new() };
+        // BailanCraft: when some Thai of the paragraph can't be shown in its source font (a
+        // subset holds only the glyphs it used), all its Thai is drawn in the bundled Thai face,
+        // so one row doesn't mix two Thai typefaces. A face the user picked is kept.
+        let thai_span = |range: &std::ops::Range<usize>, index: usize| {
+            pdfcraft_fonts::thai_draw::has_thai(draft.get(range.clone()).unwrap_or_default())
+                && overrides.get(&index).and_then(|range| range.resource.as_deref()).or(style.resource.as_deref()).is_none()
+        };
+        let mut thai_block = false;
+        for (range, index) in spans.iter().filter(|(range, index)| thai_span(range, *index)) {
+            let source = lines.get(*index).unwrap_or(first);
+            let text = draft.get(range.clone()).unwrap_or_default();
+            if text
+                .chars()
+                .filter(|c| pdfcraft_fonts::thai_draw::is_thai(*c))
+                .any(|c| resolver.encodable_font(source, &c.to_string(), None).ok().flatten().is_none())
+            {
+                thai_block = true;
+                break;
+            }
+        }
         for (range, index) in spans {
             let source = lines.get(index).unwrap_or(first);
             let start = range.start;
-            // BailanCraft: a row with Thai its source font can't show is drawn whole in the
-            // bundled Thai face: Thai is shaped, and a shaped row must keep one face.
-            let span_text = draft.get(range.clone()).unwrap_or_default();
-            let thai_row = pdfcraft_fonts::thai_draw::has_thai(span_text)
-                && overrides.get(&index).and_then(|range| range.resource.as_deref()).or(style.resource.as_deref()).is_none()
-                && span_text
-                    .chars()
-                    .filter(|c| pdfcraft_fonts::thai_draw::is_thai(*c))
-                    .any(|c| resolver.encodable_font(source, &c.to_string(), None).ok().flatten().is_none());
-            let thai_font = if thai_row { resolver.thai_face()? } else { None };
+            let thai_font = if thai_block && thai_span(&range, index) { resolver.thai_face()? } else { None };
             for (offset, ch) in draft.get(range).unwrap_or_default().char_indices() {
                 if ch == '\n' {
                     chars.push((ch, index, source.font.clone()));
@@ -173,6 +184,12 @@ impl CharacterPreparation<'_> {
                     let name = resolver.substitute_font(source);
                     substituted = Some(source_family(&source.base_font).base_font(source.bold, source.italic).to_owned());
                     name
+                };
+                // BailanCraft: a Thai mark stays in the run of the letter it sits on, so it is
+                // shaped with that letter when the paragraph's runs meet between them.
+                let index = match chars.last() {
+                    Some((_, before, font)) if is_combining_mark(ch) && !name.is_empty() && *font == name => *before,
+                    _ => index,
                 };
                 chars.push((ch, index, name));
             }
@@ -299,12 +316,27 @@ fn embed_shaped_resources(doc: &mut Document, fonts: &mut Dict, runs: &ShapedRun
     Ok(resources)
 }
 
+/// BailanCraft: Thai marks and Latin combining marks, which are shaped onto the letter before them.
+fn is_combining_mark(c: char) -> bool {
+    matches!(c, '\u{0300}'..='\u{036F}' | '\u{0E31}' | '\u{0E34}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}')
+}
+
+/// BailanCraft: text whose shaping reaches across runs: right-to-left and joining scripts, Indic
+/// and other scripts whose clusters reorder, and bidi or joiner controls. Thai is shaped cluster
+/// by cluster, so a row of Thai may be shaped one run at a time.
+fn shaped_across_runs(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(u32::from(c), 0x0590..=0x0dff | 0x0e80..=0x0fff | 0x1780..=0x17ff | 0x200c..=0x200f | 0x202a..=0x202e | 0x2066..=0x2069)
+    })
+}
+
 fn validate_contextual_rows(rows: &[Vec<StyledChar>], kept: &[bool]) -> Result<(), EditError> {
     for (row, _) in rows.iter().zip(kept).filter(|(_, retained)| !**retained) {
         let text: String = row.iter().map(|character| character.0).collect();
-        if pdfcraft_fonts::source_shaping::required(&text)
-            && row.first().is_some_and(|first| row.iter().any(|character| character.1 != first.1 || character.2 != first.2))
-        {
+        // A run that starts with a mark would draw it on nothing.
+        let mark_starts_run = row.windows(2).any(|pair| matches!(pair, [a, b] if is_combining_mark(b.0) && (a.1 != b.1 || a.2 != b.2)));
+        let mixed = row.first().is_some_and(|first| row.iter().any(|character| character.1 != first.1 || character.2 != first.2));
+        if pdfcraft_fonts::source_shaping::required(&text) && mixed && (shaped_across_runs(&text) || mark_starts_run) {
             return Err(EditError::Invalid(
                 "contextual/bidi text across font or style boundaries needs a uniform full-face row; mixed contextual runs are not yet supported"
                     .into(),

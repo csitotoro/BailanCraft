@@ -760,6 +760,14 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
         })
         .collect();
     let size_user = (trm0.0[2].powi(2) + trm0.0[3].powi(2)).sqrt() * ts.size;
+    // BailanCraft: Word draws ำ as NIKHAHIT and SARA AA; the run reads back as SARA AM.
+    let composed = match pdfcraft_fonts::thai_text::compose_sara_am(&text) {
+        std::borrow::Cow::Owned(composed) => Some(composed),
+        std::borrow::Cow::Borrowed(_) => None,
+    };
+    if let Some(composed) = composed {
+        text = composed;
+    }
     // A numeric-only TJ adjusts the current text matrix but paints no glyphs.
     // It must not create a phantom editable line or enlarge its neighbours' boxes.
     if !pieces.iter().any(|p| matches!(p, Object::String(s) if !s.bytes.is_empty())) {

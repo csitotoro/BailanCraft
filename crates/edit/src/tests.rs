@@ -10801,3 +10801,46 @@ fn thai_typed_into_a_font_without_thai_uses_the_bundled_thai_face() {
         assert!(fonts.iter().any(|(_, program)| program.as_deref() == Some(thai)), "{to}: the Thai face draws the Thai run");
     }
 }
+
+#[test]
+fn thai_typed_into_a_row_of_several_runs_is_shaped_run_by_run() {
+    // BailanCraft: Word writes a row in several runs (here a colour change splits it). Thai typed
+    // into one of them used to be refused: "mixed contextual runs are not yet supported".
+    if pdfcraft_fonts::thai_draw::static_thai_face().is_none() {
+        return;
+    }
+    let content = "BT /F1 12 Tf 14 TL 72 700 Td (Term of payment) Tj T* (Pay in ) Tj 1 0 0 rg (twelve parts) Tj ET";
+    for edits in [vec![("Pay", "แบ่งชำระ")], vec![("Pay", "แบ่งชำระ"), ("twelve parts", "12 งวด น้ำ")], vec![("twelve", "สิบสอง")]] {
+        let mut doc = embedded_program_page(content, "Inter-Regular");
+        let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+        assert!(block.lines.len() >= 3, "the second row is two runs: {:?}", block.rows);
+        let mut draft = block.editor_text.clone();
+        for (from, to) in &edits {
+            draft = draft.replacen(from, to, 1);
+        }
+        text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle::default()).unwrap_or_else(|e| panic!("{edits:?}: {e}"));
+        let doc = reopen(&doc);
+        assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.replace('\n', " "), draft.replace('\n', " "), "{edits:?}");
+    }
+}
+
+#[test]
+fn word_s_split_sara_am_reads_back_as_sara_am() {
+    // BailanCraft: Word draws ำ as NIKHAHIT then SARA AA (with a tone mark between them in น้ำ),
+    // from a Thai font's private-use forms. The editor reads the word Word was given.
+    let mut doc = embedded_program_page("BT /F1 12 Tf 72 700 Td (ABCDE) Tj ET", "Inter-Regular");
+    let cmap = b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap 1 begincodespacerange <00> <FF> endcodespacerange \
+        5 beginbfchar <41> <0E0A> <42> <F711> <43> <0E32> <44> <0E19> <45> <0E49> endbfchar endcmap end end";
+    let to_unicode = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap)));
+    let mut font = doc.dict(&Object::Ref(pdfcraft_cos::ObjRef::new(5, 0))).unwrap();
+    font.set(b"ToUnicode".to_vec(), Object::Ref(to_unicode));
+    doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
+    for (shown, read) in [("ABC", "ชำ"), ("DBEC", "น้ำ"), ("DE", "น้")] {
+        let content = format!("BT /F1 12 Tf 72 700 Td ({shown}) Tj ET");
+        let page = pdfcraft_model::pages(&doc).remove(0);
+        let contents = page.dict.get(b"Contents").and_then(Object::as_ref).unwrap();
+        doc.set(contents, Object::Stream(Stream::flate(Dict::new(), content.as_bytes())));
+        let doc = reopen(&doc);
+        assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, read, "{shown}");
+    }
+}

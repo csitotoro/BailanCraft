@@ -795,3 +795,13 @@ fn low_codes_resolve_to_the_covering_range() {
     assert_eq!(covered, [5, 6, 7, 100, 101]);
     assert_eq!((u.covering(0xFFFF).is_some(), u.covering(0x1_0001).is_some(), u.covering(0x1_0002).is_none()), (true, true, true));
 }
+
+#[test]
+fn a_thai_fonts_private_use_mark_forms_read_as_thai_marks() {
+    // BailanCraft: Word's ToUnicode for Cordia New lists the shifted NIKHAHIT and MAI THO at
+    // U+F711 and U+F70B, which no font shows; they read as the marks they are.
+    let map = to_unicode(b"3 beginbfchar <0001> <0E0A> <0002> <F711> <0003> <F70B> endbfchar");
+    assert_eq!(map.get(&2).map(String::as_str), Some("\u{0E4D}"));
+    assert_eq!(map.get(&3).map(String::as_str), Some("\u{0E49}"));
+    assert_eq!(map.get(&1).map(String::as_str), Some("ช"));
+}

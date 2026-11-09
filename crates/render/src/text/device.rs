@@ -287,6 +287,8 @@ impl<'a> Device<'a> for TextDevice {
         if !replaced && text.chars().all(char::is_control) {
             return;
         }
+        // BailanCraft: a Thai font's private-use mark forms read as the marks they show.
+        let text = pdfcraft_fonts::thai_text::standard_text(text);
         // Glyph space → view space. Glyph space uses 1000 units per em for outline glyphs; the em
         // box spans descender (−200) to ascender (800), the advance gives the width.
         let t = transform * glyph_transform;
@@ -345,9 +347,12 @@ impl<'a> Device<'a> for TextDevice {
             quad: corners.map(|p| [p.x as f32, p.y as f32]),
             direction: direction.map(|d| d as f32),
         };
-        match &mut self.actual {
-            Some((_, _, drawn)) => drawn.push((dir, direction, glyph)),
-            None => self.glyphs.push((dir, direction, glyph)),
+        let drawn = match &mut self.actual {
+            Some((_, _, drawn)) => drawn,
+            None => &mut self.glyphs,
+        };
+        if !join_sara_am(drawn, &glyph) {
+            drawn.push((dir, direction, glyph));
         }
     }
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {}
@@ -516,4 +521,67 @@ pub(crate) fn extract_page_filtered(pdf: &Pdf, page: usize, settings: &Interpret
         emit(&mut text, &f.ids, &f.line_of, &f.space_before, None);
     }
     Ok(text)
+}
+
+/// BailanCraft: Word draws ำ (SARA AM) as NIKHAHIT, then any tone mark, then SARA AA. A SARA AA
+/// glyph drawn after those becomes part of that SARA AM: the glyph before it reads ำ (and a
+/// NIKHAHIT before a tone mark reads as that tone mark), and its box takes in the SARA AA's.
+/// `true` when `aa` was taken in this way.
+fn join_sara_am(drawn: &mut [Drawn], aa: &TextGlyph) -> bool {
+    const NIKHAHIT: char = '\u{0E4D}';
+    if aa.text != "\u{0E32}" {
+        return false;
+    }
+    let single = |at: Option<usize>| {
+        let mut chars = at.and_then(|at| drawn.get(at)).map(|g| g.2.text.chars())?;
+        chars.next().filter(|_| chars.next().is_none())
+    };
+    let last = drawn.len().checked_sub(1);
+    let before = drawn.len().checked_sub(2);
+    let am = match (single(before), single(last)) {
+        (_, Some(NIKHAHIT)) => last,
+        (Some(NIKHAHIT), Some(tone)) if pdfcraft_fonts::thai_text::is_tone(tone) => {
+            if let Some(nikhahit) = before.and_then(|at| drawn.get_mut(at)) {
+                nikhahit.2.text = tone.to_string();
+            }
+            last
+        }
+        _ => return false,
+    };
+    let Some(am) = am.and_then(|at| drawn.get_mut(at)) else { return false };
+    am.2.text = "\u{0E33}".into();
+    let r = &mut am.2.rect;
+    *r = [r[0].min(aa.rect[0]), r[1].min(aa.rect[1]), r[2].max(aa.rect[2]), r[3].max(aa.rect[3])];
+    am.2.quad = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+    true
+}
+
+#[cfg(test)]
+mod bailancraft_tests {
+    use super::*;
+
+    fn glyph(text: &str, x: f32) -> Drawn {
+        let rect = [x, 0.0, x + 5.0, 10.0];
+        (0, [1.0, 0.0], TextGlyph { text: text.into(), rect, quad: [[x, 0.0], [x + 5.0, 0.0], [x + 5.0, 10.0], [x, 10.0]], direction: [1.0, 0.0] })
+    }
+
+    fn joined(glyphs: &[(&str, f32)]) -> Vec<String> {
+        let mut drawn: Vec<Drawn> = Vec::new();
+        for (text, x) in glyphs {
+            let g = glyph(text, *x);
+            if !join_sara_am(&mut drawn, &g.2) {
+                drawn.push(g);
+            }
+        }
+        drawn.into_iter().map(|g| g.2.text).collect()
+    }
+
+    #[test]
+    fn word_s_nikhahit_and_sara_aa_are_copied_as_sara_am() {
+        assert_eq!(joined(&[("ช", 0.0), ("\u{0E4D}", 1.0), ("า", 5.0), ("ร", 10.0)]), ["ช", "ำ", "ร"]);
+        assert_eq!(joined(&[("น", 0.0), ("\u{0E4D}", 1.0), ("\u{0E49}", 1.0), ("า", 5.0)]), ["น", "\u{0E49}", "ำ"]);
+        assert_eq!(joined(&[("น", 0.0), ("\u{0E49}", 1.0), ("\u{0E4D}", 1.0), ("า", 5.0)]), ["น", "\u{0E49}", "ำ"]);
+        assert_eq!(joined(&[("ก", 0.0), ("า", 5.0)]), ["ก", "า"], "SARA AA alone stays");
+        assert_eq!(joined(&[("า", 5.0)]), ["า"]);
+    }
 }

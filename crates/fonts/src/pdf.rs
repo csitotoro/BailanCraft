@@ -960,7 +960,8 @@ fn add_explicit(out: &mut Unicode, budget: &mut usize, seq: &mut u32, code: u32,
         return false;
     }
     *seq = seq.saturating_add(1);
-    out.explicit.insert(code, (*seq, text));
+    // BailanCraft: a Thai font's private-use mark forms read as the marks they show.
+    out.explicit.insert(code, (*seq, crate::thai_text::standard_text(text)));
     true
 }
 
@@ -1281,7 +1282,8 @@ fn unicode_map(doc: &Document, font: &Dict, composite: bool) -> Unicode {
                         // A name we cannot read removes any inherited meaning for that code,
                         // rather than leaving the base encoding's letter standing in for it.
                         match glyph_text(&String::from_utf8_lossy(n)) {
-                            Some(t) => out.encoding.insert(code, t),
+                            // BailanCraft: `uniF711` and the like are Thai marks.
+                            Some(t) => out.encoding.insert(code, crate::thai_text::standard_text(t)),
                             None => out.encoding.remove(&code),
                         };
                         code = code.saturating_add(1);
