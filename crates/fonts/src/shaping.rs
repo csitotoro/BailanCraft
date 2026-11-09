@@ -28,6 +28,9 @@ pub enum ShapedScript {
     Arabic,
     Hebrew,
     Thai,
+    /// BailanCraft: a face installed on this computer, by its place among the faces loaded
+    /// ([`installed_face`]).
+    Face(u16),
 }
 
 impl ShapedScript {
@@ -36,8 +39,86 @@ impl ShapedScript {
             Self::Arabic => crate::document_arabic_font(),
             Self::Hebrew => crate::document_hebrew_font(false),
             Self::Thai => crate::document_thai_font(),
+            Self::Face(_) => None,
         }
     }
+
+    /// BailanCraft: the PostScript name of an installed face.
+    pub fn face_name(self) -> Option<String> {
+        match self {
+            Self::Face(slot) => loaded_faces().lock().ok()?.get(usize::from(slot)).map(|f| f.0.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// BailanCraft: an installed face loaded for shaping: its PostScript name, and the face.
+type LoadedFace = (String, &'static (FontRef<'static>, ShaperData));
+
+/// Most installed faces one run of the app loads (each stays loaded until it ends).
+const MAX_LOADED_FACES: usize = 64;
+
+fn loaded_faces() -> &'static std::sync::Mutex<Vec<LoadedFace>> {
+    static FACES: OnceLock<std::sync::Mutex<Vec<LoadedFace>>> = OnceLock::new();
+    FACES.get_or_init(Default::default)
+}
+
+/// BailanCraft: the installed face whose PostScript name is `postscript` ("CordiaNew-Bold"), loaded
+/// for shaping and drawing, or `None` when this computer doesn't have it (or it may not be
+/// embedded).
+pub fn installed_face(postscript: &str) -> Option<ShapedScript> {
+    let key = crate::embedding::face_key(postscript);
+    if key.is_empty() {
+        return None;
+    }
+    let mut faces = loaded_faces().lock().ok()?;
+    if let Some(slot) = faces.iter().position(|f| crate::embedding::face_key(&f.0) == key) {
+        return u16::try_from(slot).ok().map(ShapedScript::Face);
+    }
+    if faces.len() >= MAX_LOADED_FACES {
+        return None;
+    }
+    let face = crate::system_faces::installed().iter().find(|f| f.embeddable && crate::embedding::face_key(&f.postscript) == key)?;
+    let program = crate::system_faces::program(face)?;
+    // Kept for the rest of the run, as the craft-fonts faces are: at most MAX_LOADED_FACES.
+    let bytes: &'static [u8] = Box::leak(program.to_vec().into_boxed_slice());
+    let font = FontRef::new(bytes).ok()?;
+    let data = ShaperData::new(&font);
+    let loaded: &'static (FontRef<'static>, ShaperData) = Box::leak(Box::new((font, data)));
+    faces.push((face.postscript.clone(), loaded));
+    u16::try_from(faces.len() - 1).ok().map(ShapedScript::Face)
+}
+
+/// BailanCraft: a face from its program (a font file the user picked, or one a test supplies),
+/// loaded under its own PostScript name so [`installed_face`] finds it. `None` when it can't be
+/// embedded for editing or too many faces are loaded.
+pub fn register_face(bytes: Vec<u8>) -> Option<ShapedScript> {
+    crate::embedding::validate(&bytes).ok()?;
+    let (_, postscript) = crate::embedding::names(&bytes).ok()?;
+    let key = crate::embedding::face_key(&postscript);
+    let mut faces = loaded_faces().lock().ok()?;
+    if let Some(slot) = faces.iter().position(|f| crate::embedding::face_key(&f.0) == key) {
+        return u16::try_from(slot).ok().map(ShapedScript::Face);
+    }
+    if faces.len() >= MAX_LOADED_FACES {
+        return None;
+    }
+    let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+    let font = FontRef::new(bytes).ok()?;
+    let data = ShaperData::new(&font);
+    let loaded: &'static (FontRef<'static>, ShaperData) = Box::leak(Box::new((font, data)));
+    faces.push((postscript, loaded));
+    u16::try_from(faces.len() - 1).ok().map(ShapedScript::Face)
+}
+
+/// Whether the face of `script` has a glyph for `c`.
+pub fn shaped_has(script: ShapedScript, c: char) -> bool {
+    face(script).is_some_and(|(font, _)| font.charmap().map(c).is_some())
+}
+
+/// BailanCraft: shape one directional run of `text` with an installed face.
+pub fn shape_face(text: &str, rtl: bool, face: ShapedScript) -> Result<Vec<ShapedCluster>, GlyphError> {
+    shape_script(text, rtl, face)
 }
 
 fn face(script: ShapedScript) -> Option<&'static (FontRef<'static>, ShaperData)> {
@@ -48,6 +129,7 @@ fn face(script: ShapedScript) -> Option<&'static (FontRef<'static>, ShaperData)>
         ShapedScript::Arabic => &FACE,
         ShapedScript::Hebrew => &HEBREW,
         ShapedScript::Thai => &THAI,
+        ShapedScript::Face(slot) => return loaded_faces().lock().ok()?.get(usize::from(slot)).map(|f| f.1),
     };
     cache
         .get_or_init(|| {
@@ -98,15 +180,16 @@ fn shape_script(text: &str, rtl: bool, kind: ShapedScript) -> Result<Vec<ShapedC
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_direction(if rtl { Direction::RightToLeft } else { Direction::LeftToRight });
-    buffer.set_script(match kind {
-        ShapedScript::Arabic => script::ARABIC,
-        ShapedScript::Hebrew => script::HEBREW,
-        ShapedScript::Thai => script::THAI,
-    });
+    match kind {
+        ShapedScript::Arabic => buffer.set_script(script::ARABIC),
+        ShapedScript::Hebrew => buffer.set_script(script::HEBREW),
+        ShapedScript::Thai => buffer.set_script(script::THAI),
+        ShapedScript::Face(_) => buffer.guess_segment_properties(),
+    }
     // Preserve the historical Arabic per-character mapping; Hebrew and Thai marks stay with their base.
     buffer.set_cluster_level(match kind {
         ShapedScript::Arabic => BufferClusterLevel::Characters,
-        ShapedScript::Hebrew | ShapedScript::Thai => BufferClusterLevel::MonotoneGraphemes,
+        ShapedScript::Hebrew | ShapedScript::Thai | ShapedScript::Face(_) => BufferClusterLevel::MonotoneGraphemes,
     });
     let shaped = shaper.shape(buffer, ShapeOptions::new());
     // Clusters are byte offsets into `text`; a cluster shows the characters up to the next one.

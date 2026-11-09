@@ -33,6 +33,8 @@ fn parse(doc: &Document, d: &Dict) -> Option<Content> {
                 aligns: crate::paragraph_align::tidy(aligns, align),
                 // Items written before character spacing have none.
                 char_spacing: d.get(b"CharSpacing").and_then(Object::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0),
+                // BailanCraft: the installed face it was drawn in, by PostScript name.
+                face: d.get(b"BCFace").and_then(|v| doc.resolve(v).as_string().map(|s| s.to_text())).filter(|s| !s.is_empty() && s.len() <= 128),
             }))
         }
         b"Image" => {
@@ -141,7 +143,12 @@ fn validate(c: &Content) -> Result<(), EditError> {
             if (r[2] - r[0]).abs() < 1.0 {
                 return Err(EditError::Invalid("the text box is too narrow".into()));
             }
-            if t.text.chars().any(is_thai) && pdfcraft_fonts::document_thai_font().is_none() {
+            if let Some(face) = t.face.as_deref()
+                && pdfcraft_fonts::installed_face(face).is_none()
+            {
+                return Err(EditError::Invalid(format!("the font {face} isn't installed on this computer; choose another font")));
+            }
+            if t.text.chars().any(is_thai) && pdfcraft_fonts::document_thai_font().is_none() && super::layout::item_face(t).is_none() {
                 return Err(thai_error(GlyphError::NoFont, &t.text));
             }
             // Without the Arabic face, `draw` decides for the Arabic letters themselves (#403): a new

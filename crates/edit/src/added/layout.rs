@@ -18,6 +18,12 @@ pub(super) fn latin_width(t: &AddedText, s: &str) -> f64 {
     t.family.width(s, t.size, t.bold, t.italic) + t.char_spacing * s.chars().count() as f64
 }
 
+/// BailanCraft: the installed face that draws `t`, loaded; `None` for the standard families or a
+/// face this computer doesn't have.
+pub(super) fn item_face(t: &AddedText) -> Option<ShapedScript> {
+    t.face.as_deref().and_then(pdfcraft_fonts::installed_face)
+}
+
 /// The lines of a text item after wrapping to its box width.
 pub fn lines(t: &AddedText) -> Vec<String> {
     wrapped(t).into_iter().map(|(line, ..)| line).collect()
@@ -35,11 +41,13 @@ pub(super) fn wrapped(t: &AddedText) -> Vec<(String, bool, usize)> {
     #[cfg(test)]
     WRAP_CALLS.with(|c| c.set(c.get().saturating_add(1)));
     let width = (t.rect[2] - t.rect[0]).max(t.size);
+    let face = item_face(t);
     let mut out = Vec::new();
     for (index, para) in t.text.split('\n').enumerate() {
         // Arabic or Hebrew: laid out with the bidirectional algorithm and shaped.
         let rtl_script = para.chars().any(|c| is_arabic(c) || is_hebrew(c));
-        let thai = para.chars().any(is_thai);
+        // BailanCraft: an installed face shapes the whole paragraph, as Thai is.
+        let thai = para.chars().any(is_thai) || (face.is_some() && !rtl_script);
         if thai
             && !rtl_script
             && let Ok(lines) = thai_lines(t, para, width)
@@ -170,6 +178,11 @@ pub(super) fn is_hebrew(c: char) -> bool {
 /// draw (or that has no face to draw it). Page-content tools refuse such text; the Add-text editor
 /// keeps it open.
 pub fn first_undrawable(t: &AddedText) -> Option<char> {
+    // BailanCraft: what the item's installed face has, it draws; the rest as without it.
+    if let Some(face) = item_face(t) {
+        let rest = AddedText { text: t.text.chars().filter(|c| *c == '\n' || !pdfcraft_fonts::shaped_has(face, *c)).collect(), face: None, ..t.clone() };
+        return first_undrawable(&rest);
+    }
     if t.text.chars().any(is_thai) {
         if let Some(c) = t.text.chars().find(|c| is_thai(*c) && !pdfcraft_fonts::thai_has(*c)) {
             return Some(c);
@@ -246,6 +259,7 @@ pub(super) fn shaped_layout(t: &AddedText, line: &str, rtl: bool) -> Result<(Vec
         return Ok((Vec::new(), 0.0));
     }
     let base = if rtl { Level::rtl() } else { Level::ltr() };
+    let face = item_face(t);
     let info = ParagraphBidiInfo::new(line, Some(base));
     let (levels, runs) = info.visual_runs(0..line.len());
     let mut pieces = Vec::new();
@@ -259,7 +273,10 @@ pub(super) fn shaped_layout(t: &AddedText, line: &str, rtl: bool) -> Result<(Vec
         let mut segments: Vec<(Option<ShapedScript>, String)> = Vec::new();
         for c in text.chars().filter(|c| !is_bidi_control(*c)) {
             let after_hebrew = segments.last().is_some_and(|(kind, _)| *kind == Some(ShapedScript::Hebrew));
-            let script = if is_thai(c) {
+            // BailanCraft: what the item's installed face has, it draws.
+            let script = if let Some(face) = face.filter(|f| pdfcraft_fonts::shaped_has(*f, c) && !is_arabic(c) && !is_hebrew(c)) {
+                Some(face)
+            } else if is_thai(c) {
                 Some(ShapedScript::Thai)
             } else if is_hebrew(c) || (run_rtl && after_hebrew && !c.is_alphanumeric() && pdfcraft_fonts::hebrew_has(c)) {
                 Some(ShapedScript::Hebrew)
@@ -282,6 +299,7 @@ pub(super) fn shaped_layout(t: &AddedText, line: &str, rtl: bool) -> Result<(Vec
                     ShapedScript::Arabic => shape_arabic(&s, run_rtl).map_err(|e| arabic_error(e, &s))?,
                     ShapedScript::Hebrew => shape_hebrew(&s, run_rtl).map_err(|e| hebrew_error(e, &s))?,
                     ShapedScript::Thai => shape_thai(&s).map_err(|e| thai_error(e, &s))?,
+                    ShapedScript::Face(_) => pdfcraft_fonts::shape_face(&s, run_rtl, script).map_err(|e| thai_error(e, &s))?,
                 };
                 Piece::Shaped(shaped)
             } else if run_rtl {

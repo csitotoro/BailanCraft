@@ -281,7 +281,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             t,
             &mut ed.look,
             Some(&mut ed.extras),
-            Fonts { sources: Some(&sources), shown, mixed_size },
+            Fonts { sources: Some(&sources), shown, mixed_size, installed: true },
             Some(paragraphs),
         );
         if out.size_committed {
@@ -402,12 +402,35 @@ fn added_text_format(
     style: &mut pdfcraft_engine::AddedText,
     paragraphs: Option<crate::format_text_ui::Paragraphs>,
 ) -> crate::format_text_ui::Outcome {
-    let shown = style.family.label().to_string();
-    let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false }, paragraphs);
-    if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
-        style.family = family;
+    // BailanCraft: an installed face shows by its name.
+    let shown = style.face.as_deref().map(installed_face_label).unwrap_or_else(|| style.family.label().to_string());
+    let installed = cfg!(not(target_arch = "wasm32"));
+    let out =
+        crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false, installed }, paragraphs);
+    match &out.font {
+        Some(crate::format_text_ui::FontChoice::Family(family)) => {
+            style.family = *family;
+            style.face = None;
+        }
+        // BailanCraft: the face draws the whole box; it is kept by its PostScript name.
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(crate::format_text_ui::FontChoice::Installed(path, index)) => {
+            if let Some(face) = pdfcraft_fonts::system_faces::installed().iter().find(|f| f.path == *path && f.index == *index) {
+                style.face = Some(face.postscript.clone());
+            }
+        }
+        _ => {}
     }
     out
+}
+
+/// BailanCraft: an installed face's name as the font list shows it ("Cordia New Bold").
+fn installed_face_label(postscript: &str) -> String {
+    let key = pdfcraft_fonts::embedding::face_key(postscript);
+    pdfcraft_fonts::system_faces::installed()
+        .iter()
+        .find(|f| pdfcraft_fonts::embedding::face_key(&f.postscript) == key)
+        .map_or_else(|| postscript.to_owned(), |f| f.full_name.clone())
 }
 
 impl PdfCraftApp {

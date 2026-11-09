@@ -74,6 +74,14 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   signatures (no Thai script face), line captions, measurement labels, redaction overlay text,
   push-button captions, `doc_create` from text. Thai office stamps are `StampGroup::Thai`
   (`ThApproved…`, `/Name` `BCTh…`), listed first in the stamp palette; they are not dynamic.
+- Installed fonts (`pdfcraft_fonts::system_faces`, incl. `.ttc` faces, OS/2 `fsType` decides,
+  no open-licence requirement): Edit text completes a PDF's subset with the same installed face;
+  the Text tool's `AddedText.face` (PostScript name, stored as `/BCFace`) draws the whole box as
+  shaped outlines (`ShapedScript::Face`, `installed_face`/`register_face`). Re-editing such a box
+  needs the face installed.
+- Word PDFs: `/ToUnicode` maps the NIKHAHIT of ำ to a space (`restore_blank_glyphs`), lines sit in
+  one-line clips (`place::clipped_out` draws the rewrite on top), shifted marks use U+F700–F71A
+  (`fonts::thai_text`).
 - Some UI strings have no Thai translation yet (e.g. the update dialog).
 
 ## Known test notes (this machine)

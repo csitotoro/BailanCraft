@@ -83,7 +83,7 @@ pub(super) fn draw_laid_shaped(
                 entry.insert(outline(c.script, *id).map_err(|e| match c.script {
                     ShapedScript::Arabic => arabic_error(e, &c.text),
                     ShapedScript::Hebrew => hebrew_error(e, &c.text),
-                    ShapedScript::Thai => thai_error(e, &c.text),
+                    ShapedScript::Thai | ShapedScript::Face(_) => thai_error(e, &c.text),
                 })?);
             }
         }
@@ -214,16 +214,21 @@ fn type3_shaped(doc: &mut Document, clusters: &[&ShapedCluster], outlines: &Hash
     let cmap = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
     // The face's family when every glyph comes from one script; without the face, the script's
     // name (as Arabic items were always named).
-    let family = match clusters.first().map(|c| c.script).filter(|s| clusters.iter().all(|c| c.script == *s)) {
-        Some(script) => script.font().map_or(
-            match script {
-                ShapedScript::Arabic => "Arabic",
-                ShapedScript::Hebrew => "Hebrew",
-                ShapedScript::Thai => "Thai",
-            },
-            |f| f.family,
-        ),
-        None => "PdfCraft Shaped Text",
+    let family: String = match clusters.first().map(|c| c.script).filter(|s| clusters.iter().all(|c| c.script == *s)) {
+        // BailanCraft: an installed face goes by its PostScript name.
+        Some(script @ ShapedScript::Face(_)) => script.face_name().unwrap_or_else(|| "Installed".into()),
+        Some(script) => script
+            .font()
+            .map_or(
+                match script {
+                    ShapedScript::Arabic => "Arabic",
+                    ShapedScript::Hebrew => "Hebrew",
+                    ShapedScript::Thai | ShapedScript::Face(_) => "Thai",
+                },
+                |f| f.family,
+            )
+            .to_owned(),
+        None => "PdfCraft Shaped Text".to_owned(),
     };
     let mut descriptor = Dict::new();
     descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
@@ -283,6 +288,7 @@ pub(super) fn draw(doc: &mut Document, c: &Content, view: [f64; 6], taken: &Dict
             fonts.set(name.clone().into_bytes(), Object::Dict(font));
             let face_or_new = |has: fn(char) -> bool, face: bool| t.text.chars().any(has) && (face || !existing);
             if t.text.chars().any(is_thai)
+                || super::layout::item_face(t).is_some()
                 || face_or_new(is_arabic, pdfcraft_fonts::document_arabic_font().is_some())
                 || face_or_new(is_hebrew, pdfcraft_fonts::document_hebrew_font(false).is_some())
             {
@@ -364,6 +370,9 @@ pub(super) fn params(c: &Content) -> Dict {
             d.set(b"Rect".to_vec(), arr(&text_rect(t)));
             if t.char_spacing != 0.0 {
                 d.set(b"CharSpacing".to_vec(), Object::Real(t.char_spacing));
+            }
+            if let Some(face) = &t.face {
+                d.set(b"BCFace".to_vec(), PdfString::text(face));
             }
         }
         Content::Image(i) => {

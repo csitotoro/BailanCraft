@@ -41,6 +41,8 @@ pub(crate) struct Fonts<'a> {
     /// The name the list shows for the current choice.
     pub shown: String,
     pub mixed_size: bool,
+    /// BailanCraft: offer "Installed fonts…" for added text too.
+    pub installed: bool,
 }
 
 /// Text being typed in, for the alignment buttons: with some of it selected, they show and set the
@@ -167,13 +169,13 @@ pub(crate) fn panel(
                     ui.separator();
                 }
                 for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                    if ui.selectable_label(fonts.sources.is_none() && look.family == f, f.label()).clicked() {
+                    if ui.selectable_label(fonts.sources.is_none() && look.face.is_none() && look.family == f, f.label()).clicked() {
                         out.font = Some(FontChoice::Family(f));
                     }
                 }
-                if fonts.sources.is_some() {
+                if fonts.sources.is_some() || fonts.installed {
                     ui.separator();
-                    if ui.selectable_label(false, tl!("Load font…")).clicked() {
+                    if fonts.sources.is_some() && ui.selectable_label(false, tl!("Load font…")).clicked() {
                         out.font = Some(FontChoice::Load);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
@@ -656,7 +658,7 @@ mod typed_size_tests {
                     ready = true;
                     return;
                 }
-                let fonts = Fonts { sources: Some(&[]), shown: tl!("Mixed").into(), mixed_size: true };
+                let fonts = Fonts { sources: Some(&[]), shown: tl!("Mixed").into(), mixed_size: true, installed: true };
                 panel(ui, &Tokens::get(ui.ctx()), look, None, fonts, None);
             },
             AddedText::default(),
@@ -671,6 +673,35 @@ mod typed_size_tests {
         assert!(h.get_by_label("Alignment").rect().right() <= 272.0, "the wider size field must leave room for the rest of the format row");
         if let Ok(path) = std::env::var("PDFCRAFT_MIXED_PANEL_SHOT") {
             h.render().unwrap().save(path).unwrap();
+        }
+    }
+
+    /// BailanCraft: the font list for new text (no source fonts) offers the installed fonts too.
+    #[test]
+    fn the_font_list_for_new_text_offers_installed_fonts() {
+        crate::i18n::set_current(crate::i18n::Lang::EN);
+        for installed in [true, false] {
+            let mut ready = false;
+            let mut h = egui_kittest::Harness::builder().with_size(vec2(272.0, 600.0)).with_accessibility_check(false).build_ui_state(
+                move |ui, look: &mut AddedText| {
+                    if !ready {
+                        egui_extras::install_image_loaders(ui.ctx());
+                        crate::theme::install_fonts(ui.ctx());
+                        crate::theme::apply(ui.ctx(), crate::theme::ThemeKind::Light);
+                        ready = true;
+                        return;
+                    }
+                    let fonts = Fonts { sources: None, shown: "Helvetica".into(), mixed_size: false, installed };
+                    panel(ui, &Tokens::get(ui.ctx()), look, None, fonts, None);
+                },
+                AddedText::default(),
+            );
+            h.run_steps(4);
+            h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Font").click();
+            h.run_steps(3);
+            assert!(h.query_by_label("Times").is_some(), "the standard families are listed");
+            assert_eq!(h.query_by_label("Installed fonts…").is_some(), installed);
+            assert!(h.query_by_label("Load font…").is_none(), "new text has no page to load a font into");
         }
     }
 

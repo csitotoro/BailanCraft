@@ -107,6 +107,10 @@ pub struct AddedText {
     /// Paragraphs (lines typed with Enter) aligned other than [`AddedText::align`], by index;
     /// `None` and paragraphs past the end follow `align` ([`crate::paragraph_align`]).
     pub aligns: Vec<Option<Align>>,
+    /// BailanCraft: an installed face (its PostScript name, "CordiaNew") that draws the whole item
+    /// in place of [`AddedText::family`]; `None` for the standard families. Its glyphs are drawn as
+    /// outlines, so the PDF needs no font file; re-editing needs the face on the computer.
+    pub face: Option<String>,
 }
 
 impl AddedText {
@@ -129,6 +133,7 @@ impl Default for AddedText {
             align: Align::Left,
             aligns: Vec::new(),
             char_spacing: 0.0,
+            face: None,
         }
     }
 }

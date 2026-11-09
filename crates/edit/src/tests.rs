@@ -10945,3 +10945,39 @@ fn a_character_another_font_draws_is_not_stretched_to_its_runs_width() {
     }
     assert!(others > 0, "{content}");
 }
+
+#[test]
+fn added_text_in_an_installed_face_is_drawn_in_it_and_keeps_it() {
+    // BailanCraft: the Text tool can use a face installed on the computer (Cordia New, TH
+    // Sarabun New…). Here Inter stands in for one. Its glyphs are drawn as outlines named after
+    // it, and the item keeps the face's name for editing it again.
+    let inter = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+    assert!(pdfcraft_fonts::register_face(inter.to_vec()).is_some());
+    let mut doc = fixture();
+    let t = AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "Hello face".into(), size: 14.0, face: Some("Inter-Regular".into()), ..AddedText::default() };
+    assert_eq!(first_undrawable(&t), None);
+    add_content(&mut doc, 0, &Content::Text(t.clone())).unwrap();
+    let reopened = reopen(&doc);
+    assert_eq!(list_added(&reopened)[0].content, Content::Text(AddedText { rect: super::added::text_rect(&t), ..t.clone() }));
+    let named = |doc: &Document| {
+        (1..4096u32).filter_map(|n| doc.dict(&Object::Ref(pdfcraft_cos::ObjRef::new(n, 0)))).any(|d| {
+            d.name(b"Type") == Some(b"FontDescriptor".as_slice()) && d.name(b"FontName") == Some(b"Inter-Regular".as_slice())
+        })
+    };
+    assert!(named(&reopened), "the glyphs are drawn from the face");
+    // Wider than in Helvetica? Its own advances lay it out: a narrow box wraps it.
+    let narrow = AddedText { rect: [72.0, 600.0, 120.0, 700.0], ..t.clone() };
+    assert_eq!(super::added::lines(&narrow), ["Hello", "face"]);
+    // Thai the face lacks still draws, in the Thai face.
+    if pdfcraft_fonts::document_thai_font().is_some() {
+        let mixed = AddedText { text: "Hello สวัสดี".into(), ..t.clone() };
+        assert_eq!(first_undrawable(&mixed), None);
+        update_content(&mut doc, 0, 0, &Content::Text(mixed)).unwrap();
+    }
+    // A face this computer doesn't have is refused, and nothing changes.
+    let before = list_added(&doc);
+    let missing = AddedText { face: Some("NoSuchFace-Regular".into()), ..t };
+    let err = update_content(&mut doc, 0, 0, &Content::Text(missing)).unwrap_err().to_string();
+    assert!(err.contains("isn't installed"), "{err}");
+    assert_eq!(list_added(&doc), before);
+}
