@@ -35,7 +35,8 @@ fn the_exe_has_version_info_with_the_package_version() {
     for (key, value) in [
         ("ProductName", "BailanCraft"),
         ("FileDescription", "BailanCraft command-line tool"),
-        ("LegalCopyright", "BailanCraft, based on PdfCraft (c) the PdfCraft contributors. MIT OR Apache-2.0."),
+        ("CompanyName", "LANNAFORGE"),
+        ("LegalCopyright", "(c) LANNAFORGE. BailanCraft is based on PdfCraft (c) the PdfCraft contributors. MIT OR Apache-2.0."),
         ("OriginalFilename", "pdfcraft-cli.exe"),
         ("InternalName", "pdfcraft-cli"),
         ("FileVersion", env!("CARGO_PKG_VERSION")),

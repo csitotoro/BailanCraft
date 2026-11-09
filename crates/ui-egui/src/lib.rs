@@ -23,7 +23,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
     former_names: &[],
     icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png")),
     accent: Some([0xa8, 0x32, 0x2d]),
-    developer: pdfcraft_engine::brand::NAME,
+    developer: pdfcraft_engine::brand::DEVELOPER,
 };
 
 use crate::control::Host as _;

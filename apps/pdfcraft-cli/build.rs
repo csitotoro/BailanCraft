@@ -14,8 +14,9 @@ fn main() {
     }
     let mut res = winresource::WindowsResource::new();
     res.set("ProductName", "BailanCraft")
+        .set("CompanyName", "LANNAFORGE")
         .set("FileDescription", "BailanCraft command-line tool")
-        .set("LegalCopyright", "BailanCraft, based on PdfCraft (c) the PdfCraft contributors. MIT OR Apache-2.0.")
+        .set("LegalCopyright", "(c) LANNAFORGE. BailanCraft is based on PdfCraft (c) the PdfCraft contributors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "pdfcraft-cli.exe")
         .set("InternalName", "pdfcraft-cli");
     if let Err(e) = res.compile() {

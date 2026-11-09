@@ -10,6 +10,13 @@ use std::borrow::Cow;
 /// The product name shown in titles, menus, dialogs and file metadata.
 pub const NAME: &str = "BailanCraft";
 
+/// Who makes BailanCraft: shown in About, the update prompt, Windows' Apps list (the MSI's
+/// publisher) and the executables' version information.
+pub const DEVELOPER: &str = "LANNAFORGE";
+
+/// LANNAFORGE's line, shown under its name in About.
+pub const DEVELOPER_TAGLINE: &str = "Born in Chiang Mai, Inspired by Lanna, Built for the World.";
+
 /// The upstream product this fork is built from, credited in About.
 pub const UPSTREAM_NAME: &str = "PdfCraft";
 

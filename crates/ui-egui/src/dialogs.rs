@@ -1576,6 +1576,13 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
                     ui.label(crate::i18n::fmt(tl!("Version {v}"), &[("v", &pdfcraft_engine::build_info::version())]));
                 });
             });
+            // BailanCraft: who makes it (engine::brand), in Thai and English.
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(format!("พัฒนาโดย {} · by {}", pdfcraft_engine::brand::DEVELOPER, pdfcraft_engine::brand::DEVELOPER))
+                    .font(theme::semibold(13.0)),
+            );
+            ui.label(egui::RichText::new(pdfcraft_engine::brand::DEVELOPER_TAGLINE).italics().color(t.text_muted));
             ui.add_space(6.0);
             ui.label(tl!("A clean-room, open-source PDF application written in Rust. MIT OR Apache-2.0."));
             ui.label(

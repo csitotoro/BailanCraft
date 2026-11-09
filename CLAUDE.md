@@ -4,7 +4,8 @@ BailanCraft is a fork of PdfCraft (storytold/pdfcraft, MIT OR Apache-2.0), a Rus
 (egui UI, hayro rendering). The fork's goals, in order: correct Thai everywhere (consonants, vowels
 and tone marks placed right, copy/search/extract giving the right text, Thai line breaking, Thai
 OCR, Thai in forms and Fill & Sign); its own identity (name, palm-leaf ("ใบลาน") look); a Windows
-installer. BailanCraft is public (github.com/csitotoro/BailanCraft, `brand::REPOSITORY`) so
+installer. BailanCraft is made by LANNAFORGE (`brand::DEVELOPER`) and public
+(github.com/csitotoro/BailanCraft, `brand::REPOSITORY`) so
 anyone can use it and send feedback; the owner's company uses the same release. The owner writes in Thai; answer
 in Thai.
 

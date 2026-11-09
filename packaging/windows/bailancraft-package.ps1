@@ -23,7 +23,7 @@
 param(
   [switch] $SkipBuild,
   # Shown as the publisher in Apps & features and in the MSI's properties.
-  [string] $Manufacturer = 'BailanCraft',
+  [string] $Manufacturer = 'LANNAFORGE',
   [string] $TesseractDir = 'C:\Program Files\Tesseract-OCR',
   [string] $TessdataDir,
   # The ocrs models (text-detection.rten, text-recognition.rten, their licences, ATTRIBUTION.txt).

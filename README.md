@@ -6,6 +6,8 @@
 A PDF reader and editor with first-class Thai support, forked from
 [PdfCraft](https://github.com/storytold/pdfcraft) and released under the same licences.
 
+**พัฒนาโดย LANNAFORGE** — *Born in Chiang Mai, Inspired by Lanna, Built for the World.*
+
 **ดาวน์โหลด:** [Releases](https://github.com/csitotoro/BailanCraft/releases) ·
 **แจ้งปัญหา / ส่งความเห็น:** [Issues](https://github.com/csitotoro/BailanCraft/issues)
 ในโปรแกรม: เมนู วิธีใช้ → Report a problem or send feedback

@@ -232,6 +232,11 @@ impl Default for View {
 /// About ▸ Contributors: a name toggle, a sort, and the list as a grab bag or a table.
 pub fn contributors_ui(ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    // BailanCraft: its developer first, then the PdfCraft contributors it is built on.
+    ui.label(egui::RichText::new(format!("BailanCraft — {}", pdfcraft_engine::brand::DEVELOPER)).strong());
+    ui.label(
+        egui::RichText::new(format!("{} {}:", pdfcraft_engine::brand::UPSTREAM_NAME, crate::i18n::t("Contributors"))).small().color(t.text_muted),
+    );
     let id = egui::Id::unique("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
