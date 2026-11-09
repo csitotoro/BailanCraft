@@ -32,7 +32,7 @@ pub const PORTABLE_DIR: &str = "BailanCraftData";
 #[macro_export]
 macro_rules! bailancraft_repository {
     () => {
-        ""
+        "csitotoro/BailanCraft"
     };
 }
 
