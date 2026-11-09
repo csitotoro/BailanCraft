@@ -178,7 +178,7 @@ fn subject(shape: &Shape) -> &'static str {
         Shape::Stamp { stamp, .. } => match stamp.group() {
             StampGroup::Dynamic => "Dynamic stamp",
             StampGroup::SignHere => "Sign Here",
-            StampGroup::StandardBusiness => "Stamp",
+            StampGroup::StandardBusiness | StampGroup::Thai => "Stamp",
         },
         Shape::CustomStamp { .. } => "Stamp",
         Shape::TypedSignature { .. } => "Signature",

@@ -188,6 +188,8 @@ pub(super) fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         super::tools::clear_of_scrollbar(ui);
         for (group, title) in [
+            // BailanCraft: Thai office stamps first; the title is Thai in every interface language.
+            (StampGroup::Thai, "ตรายางภาษาไทย"),
             (StampGroup::Dynamic, tl!("Dynamic")),
             (StampGroup::SignHere, tl!("Sign Here")),
             (StampGroup::StandardBusiness, tl!("Standard Business")),

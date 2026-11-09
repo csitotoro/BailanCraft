@@ -2852,3 +2852,44 @@ fn stamp_by_line_draws_thai_names() {
     assert!(ap.contains("(By ) Tj") && ap.contains("( at 2:14 pm, Nov 06, 2026) Tj"), "{ap}");
     assert_eq!(pdfcraft_fonts::undrawn_mark(&d), None);
 }
+
+/// BailanCraft: the Thai office stamps (อนุมัติ, ลับ, ด่วนที่สุด, สำเนาถูกต้อง, …) are their own
+/// group with their own `/Name`s, sized by their shaped width, and drawn from the Thai face: no
+/// `?`, and a saved stamp is found again by its name.
+#[test]
+fn thai_office_stamps() {
+    let thai: Vec<StampKind> = StampKind::ALL.into_iter().filter(|k| k.group() == StampGroup::Thai).collect();
+    assert_eq!(thai.len(), 12);
+    let labels: Vec<&str> = thai.iter().map(|k| k.label()).collect();
+    for want in ["อนุมัติ", "ไม่อนุมัติ", "ลับ", "ลับมาก", "ด่วน", "ด่วนที่สุด", "สำเนาถูกต้อง", "ได้รับแล้ว", "จ่ายแล้ว"]
+    {
+        assert!(labels.contains(&want), "{want} in {labels:?}");
+    }
+    for k in &thai {
+        assert!(k.name().starts_with("BCTh"), "{k:?}");
+        assert_eq!(StampKind::from_name(k.name().as_bytes()), Some(*k));
+    }
+    assert_eq!(StampKind::ThApproved.color(), StampKind::Approved.color(), "approval is green");
+    assert_eq!(StampKind::ThMostUrgent.color(), StampKind::Void.color(), "urgent is red");
+    if !pdfcraft_fonts::thai_draw::available() {
+        return;
+    }
+    // A longer label makes a wider stamp.
+    assert!(StampKind::ThCertifiedCopy.size().0 > StampKind::ThSecret.size().0);
+    let mut doc = fixture();
+    for (i, kind) in thai.iter().enumerate() {
+        let y = 700.0 - i as f64 * 40.0;
+        let shape = Shape::Stamp { rect: [100.0, y, 100.0 + kind.size().0, y + kind.size().1], stamp: *kind, by: None };
+        let at = add_annotation(
+            &mut doc,
+            &NewAnnotation { page: 0, style: Style::default_for(&shape), shape, contents: String::new(), author: "สมชาย".into() },
+            &Meta::default(),
+        )
+        .unwrap();
+        let d = list(&doc, 0)[at].clone();
+        let ap = ap_content(&doc, &d);
+        assert!(ap.contains("/BCTh0 ") && !ap.contains('?'), "{kind:?}: {ap}");
+        assert_eq!(d.name(b"Name"), Some(kind.name().as_bytes()));
+        assert_eq!(pdfcraft_fonts::undrawn_mark(&d), None);
+    }
+}

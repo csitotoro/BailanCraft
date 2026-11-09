@@ -56,7 +56,8 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   whoever stores the stream calls `thai_draw::materialize`). Headers/footers (`BCThHF…`),
   text watermarks (`BCThWM…`) and stamp labels/by-lines use it too. Still WinAnsi-only: typed
   signatures (no Thai script face), line captions, measurement labels, redaction overlay text,
-  push-button captions, `doc_create` from text. Stamp labels are still the English set.
+  push-button captions, `doc_create` from text. Thai office stamps are `StampGroup::Thai`
+  (`ThApproved…`, `/Name` `BCTh…`), listed first in the stamp palette; they are not dynamic.
 - Some UI strings have no Thai translation yet (e.g. the update dialog).
 
 ## Known test notes (this machine)
@@ -65,7 +66,7 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   code. In the real app a second launch opens its own window instead of a tab. Not yet compared
   with upstream on another machine.
 - `pdfcraft-ui-egui --test it` sometimes dies with STATUS_ACCESS_VIOLATION mid-run (native code,
-  a different test each time: fill_sign once, editing once); reruns passed. Rerun before
+  near fill_sign twice, editing once); reruns passed. Rerun before
   suspecting a change.
 - Six upstream update-flow tests are `#[ignore]`d because `brand::UPDATE_CHECK` is off;
   `bailancraft_never_asks_the_upstream_release_feed` covers the fork's behaviour.

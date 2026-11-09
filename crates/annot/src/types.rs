@@ -176,6 +176,19 @@ pub enum StampKind {
     DynReceived,
     DynReviewed,
     DynRevised,
+    // BailanCraft: Thai office stamps.
+    ThApproved,
+    ThNotApproved,
+    ThReceived,
+    ThPaid,
+    ThChecked,
+    ThCancelled,
+    ThSecret,
+    ThTopSecret,
+    ThUrgent,
+    ThMostUrgent,
+    ThCertifiedCopy,
+    ThDraft,
 }
 
 /// The palette's sections.
@@ -184,10 +197,24 @@ pub enum StampGroup {
     Dynamic,
     SignHere,
     StandardBusiness,
+    /// BailanCraft: Thai office stamps.
+    Thai,
 }
 
 impl StampKind {
-    pub const ALL: [StampKind; 22] = [
+    pub const ALL: [StampKind; 34] = [
+        StampKind::ThApproved,
+        StampKind::ThNotApproved,
+        StampKind::ThReceived,
+        StampKind::ThPaid,
+        StampKind::ThChecked,
+        StampKind::ThCancelled,
+        StampKind::ThSecret,
+        StampKind::ThTopSecret,
+        StampKind::ThUrgent,
+        StampKind::ThMostUrgent,
+        StampKind::ThCertifiedCopy,
+        StampKind::ThDraft,
         StampKind::DynApproved,
         StampKind::DynConfidential,
         StampKind::DynReceived,
@@ -217,6 +244,8 @@ impl StampKind {
         match self {
             DynApproved | DynConfidential | DynReceived | DynReviewed | DynRevised => StampGroup::Dynamic,
             Accepted | InitialHere | Rejected | SignHere | Witness => StampGroup::SignHere,
+            ThApproved | ThNotApproved | ThReceived | ThPaid | ThChecked | ThCancelled | ThSecret | ThTopSecret | ThUrgent | ThMostUrgent
+            | ThCertifiedCopy | ThDraft => StampGroup::Thai,
             _ => StampGroup::StandardBusiness,
         }
     }
@@ -245,6 +274,18 @@ impl StampKind {
             DynReceived => "RECEIVED",
             DynReviewed => "REVIEWED",
             DynRevised => "REVISED",
+            ThApproved => "อนุมัติ",
+            ThNotApproved => "ไม่อนุมัติ",
+            ThReceived => "ได้รับแล้ว",
+            ThPaid => "จ่ายแล้ว",
+            ThChecked => "ตรวจแล้ว",
+            ThCancelled => "ยกเลิก",
+            ThSecret => "ลับ",
+            ThTopSecret => "ลับมาก",
+            ThUrgent => "ด่วน",
+            ThMostUrgent => "ด่วนที่สุด",
+            ThCertifiedCopy => "สำเนาถูกต้อง",
+            ThDraft => "ร่าง",
         }
     }
 
@@ -274,6 +315,18 @@ impl StampKind {
             DynReceived => "PCDynReceived",
             DynReviewed => "PCDynReviewed",
             DynRevised => "PCDynRevised",
+            ThApproved => "BCThApproved",
+            ThNotApproved => "BCThNotApproved",
+            ThReceived => "BCThReceived",
+            ThPaid => "BCThPaid",
+            ThChecked => "BCThChecked",
+            ThCancelled => "BCThCancelled",
+            ThSecret => "BCThSecret",
+            ThTopSecret => "BCThTopSecret",
+            ThUrgent => "BCThUrgent",
+            ThMostUrgent => "BCThMostUrgent",
+            ThCertifiedCopy => "BCThCertifiedCopy",
+            ThDraft => "BCThDraft",
         }
     }
 
@@ -286,7 +339,9 @@ impl StampKind {
         use StampKind::*;
         match self {
             Approved | Completed | Final | Accepted | DynApproved | DynReceived | DynReviewed => [0.13, 0.55, 0.13],
+            ThApproved | ThReceived | ThPaid | ThChecked => [0.13, 0.55, 0.13],
             NotApproved | Rejected | Void | Confidential | NotForPublicRelease | DynConfidential => [0.80, 0.10, 0.10],
+            ThNotApproved | ThCancelled | ThSecret | ThTopSecret | ThUrgent | ThMostUrgent => [0.80, 0.10, 0.10],
             SignHere | InitialHere | Witness => [0.85, 0.35, 0.05],
             _ => [0.10, 0.30, 0.70],
         }
@@ -294,7 +349,8 @@ impl StampKind {
 
     /// The stamp's size (points) for its label, as placed with a click.
     pub fn size(self) -> (f64, f64) {
-        let w = appearance::text_width(self.label(), 16.0) * 1.12 + 24.0;
+        // BailanCraft: Thai labels are measured by their shaped width (fonts::thai_draw).
+        let w = pdfcraft_fonts::thai_draw::width(self.label(), 16.0, |s, z| appearance::text_width(s, z) * 1.12) + 24.0;
         let h = if self.group() == StampGroup::Dynamic { 42.0 } else { 30.0 };
         let w = if self.group() == StampGroup::SignHere { w + 14.0 } else { w };
         (w.max(80.0), h)
