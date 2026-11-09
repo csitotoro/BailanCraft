@@ -44,6 +44,63 @@ pub fn has_thai(text: &str) -> bool {
     text.chars().any(is_thai)
 }
 
+/// BailanCraft: the bundled Thai face as a static font, for embedding as a whole font program
+/// (Edit text). craft-fonts ships Noto Sans Thai as a variable font, which the embedder refuses;
+/// its `glyf` outlines and metrics already are the default instance, so dropping the variation
+/// tables leaves that instance as an ordinary TrueType font. `None` without the face or when its
+/// table directory can't be read.
+pub fn static_thai_face() -> Option<&'static [u8]> {
+    static FACE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+    FACE.get_or_init(|| crate::document_thai_font().and_then(|f| drop_variations(f.bytes))).as_deref()
+}
+
+/// `bytes` (one sfnt, not a collection) without its variation tables, or `None` if malformed.
+fn drop_variations(bytes: &[u8]) -> Option<Vec<u8>> {
+    const VARIATION: [&[u8; 4]; 8] = [b"fvar", b"gvar", b"avar", b"HVAR", b"VVAR", b"MVAR", b"STAT", b"cvar"];
+    let u16_at = |at: usize| bytes.get(at..at.checked_add(2)?).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    let u32_at = |at: usize| bytes.get(at..at.checked_add(4)?).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+    let version = bytes.get(0..4)?;
+    if version == b"ttcf" {
+        return None;
+    }
+    let count = usize::from(u16_at(4)?);
+    let mut tables: Vec<([u8; 4], u32, &[u8])> = Vec::with_capacity(count);
+    for i in 0..count {
+        let record = 12usize.checked_add(i.checked_mul(16)?)?;
+        let tag: [u8; 4] = bytes.get(record..record + 4)?.try_into().ok()?;
+        let checksum = u32_at(record + 4)?;
+        let offset = usize::try_from(u32_at(record + 8)?).ok()?;
+        let length = usize::try_from(u32_at(record + 12)?).ok()?;
+        let data = bytes.get(offset..offset.checked_add(length)?)?;
+        if !VARIATION.contains(&&tag) {
+            tables.push((tag, checksum, data));
+        }
+    }
+    tables.sort_by_key(|(tag, ..)| *tag);
+    let n = u16::try_from(tables.len()).ok()?;
+    let entry_selector = 15u16.saturating_sub(n.max(1).leading_zeros() as u16);
+    let search_range = (1u16 << entry_selector).saturating_mul(16);
+    let mut out = Vec::with_capacity(bytes.len());
+    out.extend_from_slice(version);
+    out.extend_from_slice(&n.to_be_bytes());
+    out.extend_from_slice(&search_range.to_be_bytes());
+    out.extend_from_slice(&entry_selector.to_be_bytes());
+    out.extend_from_slice(&n.saturating_mul(16).saturating_sub(search_range).to_be_bytes());
+    let mut offset = 12 + tables.len() * 16;
+    for (tag, checksum, data) in &tables {
+        out.extend_from_slice(tag);
+        out.extend_from_slice(&checksum.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(data.len()).ok()?.to_be_bytes());
+        offset = offset.checked_add(data.len().div_ceil(4) * 4)?;
+    }
+    for (_, _, data) in &tables {
+        out.extend_from_slice(data);
+        out.resize(out.len().div_ceil(4) * 4, 0);
+    }
+    Some(out)
+}
+
 /// Whether this build can draw Thai (it has the craft-fonts Thai face).
 pub fn available() -> bool {
     crate::document_thai_font().is_some()
@@ -407,6 +464,16 @@ fn type3(doc: &mut Document, clusters: &[ShapedCluster], outlines: &HashMap<u32,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_static_thai_face_embeds() {
+        let Some(face) = static_thai_face() else { return };
+        crate::embedding::validate(face).unwrap();
+        assert!(crate::embedding::covers(face, "ข้อความ น้ำ ปู่ ABC 123 %"));
+        assert!(crate::source_shaping::shape(face, "ปู่น้ำ").is_ok());
+        assert_eq!(drop_variations(b"ttcf...."), None);
+        assert_eq!(drop_variations(b""), None);
+    }
 
     #[test]
     fn runs_split_thai_from_the_rest() {

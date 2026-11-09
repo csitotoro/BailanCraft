@@ -7649,12 +7649,13 @@ fn a_subset_program_is_not_trusted_for_new_characters_and_the_error_names_the_ch
     let face = pdfcraft_fonts::document_japanese_font_for_style(false, false).map_or("Inter", |f| f.family);
     assert_eq!(edit.substituted, Some(format!("{face} Type3")));
     assert_eq!(text::text_blocks(&reopen(&doc), 0).unwrap()[0].editor_text, "Stable tőxt");
-    // A character no fallback face has is refused, named, and left as it was.
+    // A character no fallback face has is refused, named, and left as it was. BailanCraft: Thai
+    // (the upstream example, ก) now has its own face, so an Ethiopic letter stands in.
     let mut doc = embedded_program_page("BT /F1 12 Tf 72 700 Td (Stable text) Tj ET", "ABCDEF+Inter-Regular");
     let before = page_content_bytes(&doc, 0);
-    let result = text::rewrite_block(&mut doc, 0, 0, Some("Stable กtext"), &text::BlockStyle::default());
+    let result = text::rewrite_block(&mut doc, 0, 0, Some("Stable \u{1200}text"), &text::BlockStyle::default());
     let Err(EditError::Invalid(msg)) = result else { panic!("expected a clear error, got {result:?}") };
-    assert!(msg.contains("ก (U+0E01)") && msg.contains("Load font") && !msg.contains("Japanese"), "{msg}");
+    assert!(msg.contains("\u{1200} (U+1200)") && msg.contains("Load font") && !msg.contains("Japanese"), "{msg}");
     assert_eq!(page_content_bytes(&doc, 0), before);
 }
 
@@ -10776,4 +10777,27 @@ fn thai_headers_footers_and_watermarks() {
         ..HeaderFooter::default()
     };
     assert_eq!(bad.first_undrawable(), Some('日'));
+}
+
+/// BailanCraft: typing Thai into text whose embedded font has no Thai (a subset CordiaNew in a
+/// real invoice; here Inter) used to fail with "complex text needs the complete source
+/// TrueType/OpenType face". The new Thai run is now shaped and drawn in the bundled Thai face,
+/// embedded as a font program, and reads back as typed; text the source font has keeps it.
+#[test]
+fn thai_typed_into_a_font_without_thai_uses_the_bundled_thai_face() {
+    let Some(thai) = pdfcraft_fonts::thai_draw::static_thai_face() else { return };
+    for (content, from, to) in [
+        ("BT /F1 12 Tf 72 700 Td (Stable text) Tj ET", "text", "ข้อความ น้ำ ปู่"),
+        ("BT /F1 12 Tf 14 TL 72 700 Td (First row) Tj T* (Second row) Tj ET", "Second", "หัก ณ ที่จ่าย 3.00%"),
+    ] {
+        let mut doc = embedded_program_page(content, "Inter-Regular");
+        let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+        let draft = block.editor_text.replacen(from, to, 1);
+        text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle::default()).unwrap_or_else(|e| panic!("{to}: {e}"));
+        let doc = reopen(&doc);
+        // A longer row may wrap at a space; the text is otherwise exactly what was typed.
+        assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.replace('\n', " "), draft.replace('\n', " "), "{to}");
+        let fonts = page_font_programs(&doc);
+        assert!(fonts.iter().any(|(_, program)| program.as_deref() == Some(thai)), "{to}: the Thai face draws the Thai run");
+    }
 }

@@ -77,6 +77,15 @@ impl FontResolver<'_> {
         self.embed_face(key, &bytes, &family, "the source font could not be loaded").map(Some)
     }
 
+    /// BailanCraft: the bundled Thai face (Noto Sans Thai: Thai, Latin, digits and punctuation)
+    /// as a font resource, for a row with Thai the source font can't show. `None` without it.
+    fn thai_face(&mut self) -> Result<Option<String>, EditError> {
+        let (Some(face), Some(bytes)) = (pdfcraft_fonts::document_thai_font(), pdfcraft_fonts::thai_draw::static_thai_face()) else {
+            return Ok(None);
+        };
+        self.embed_face("bailancraft thai".into(), bytes, face.family, "the Thai font could not be loaded").map(Some)
+    }
+
     fn embed_face(&mut self, key: String, bytes: &[u8], family: &str, missing_message: &str) -> Result<String, EditError> {
         if let Some(name) = self.full_faces.get(&key) {
             return Ok(name.clone());
@@ -132,6 +141,16 @@ impl CharacterPreparation<'_> {
         for (range, index) in spans {
             let source = lines.get(index).unwrap_or(first);
             let start = range.start;
+            // BailanCraft: a row with Thai its source font can't show is drawn whole in the
+            // bundled Thai face: Thai is shaped, and a shaped row must keep one face.
+            let span_text = draft.get(range.clone()).unwrap_or_default();
+            let thai_row = pdfcraft_fonts::thai_draw::has_thai(span_text)
+                && overrides.get(&index).and_then(|range| range.resource.as_deref()).or(style.resource.as_deref()).is_none()
+                && span_text
+                    .chars()
+                    .filter(|c| pdfcraft_fonts::thai_draw::is_thai(*c))
+                    .any(|c| resolver.encodable_font(source, &c.to_string(), None).ok().flatten().is_none());
+            let thai_font = if thai_row { resolver.thai_face()? } else { None };
             for (offset, ch) in draft.get(range).unwrap_or_default().char_indices() {
                 if ch == '\n' {
                     chars.push((ch, index, source.font.clone()));
@@ -144,7 +163,9 @@ impl CharacterPreparation<'_> {
                 }
                 let text = ch.to_string();
                 let requested = overrides.get(&index).and_then(|range| range.resource.as_deref()).or(style.resource.as_deref());
-                let name = if let Some(name) = resolver.encodable_font(source, &text, requested)? {
+                let name = if let Some(name) = thai_font.clone() {
+                    name
+                } else if let Some(name) = resolver.encodable_font(source, &text, requested)? {
                     name
                 } else if needs_type3(&text) {
                     fallback.prepare(source, ch, &text, chars.len())?
@@ -605,6 +626,18 @@ fn shape_source(
         {
             return Ok(Some((bytes, shaped, family)));
         }
+    }
+    // BailanCraft: Thai documents usually embed only a subset of their font (CordiaNew,
+    // Angsana, TH Sarabun…), so newly typed Thai has no full source face. Rather than refuse the
+    // edit, draw the run in the bundled Thai face (Noto Sans Thai, which also has Latin, digits
+    // and punctuation), shaped and embedded the same way. The run's font changes; the text is
+    // right, and the rest of the block keeps its own font.
+    if pdfcraft_fonts::thai_draw::has_thai(text)
+        && let (Some(face), Some(bytes)) = (pdfcraft_fonts::document_thai_font(), pdfcraft_fonts::thai_draw::static_thai_face())
+        && pdfcraft_fonts::embedding::covers(bytes, text)
+        && let Ok(shaped) = pdfcraft_fonts::source_shaping::shape(bytes, text)
+    {
+        return Ok(Some((bytes.to_vec(), shaped, face.family.replace(' ', ""))));
     }
     Err(EditError::Invalid("complex text needs the complete source TrueType/OpenType face; load that font before editing".into()))
 }
