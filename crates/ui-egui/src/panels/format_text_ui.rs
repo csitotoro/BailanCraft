@@ -29,7 +29,8 @@ pub(crate) enum FontChoice {
     /// Load font…: pick a font file.
     Load,
     /// A font file installed on this computer.
-    Installed(std::path::PathBuf),
+    /// BailanCraft: with the face's index in a font collection.
+    Installed(std::path::PathBuf, u32),
 }
 
 /// What the font list offers and shows.
@@ -220,7 +221,7 @@ pub(crate) fn panel(
                                                     let label =
                                                         if font.face != font.family && !font.face.is_empty() { font.face.as_str() } else { family };
                                                     if ui.button(label).clicked() {
-                                                        out.font = Some(FontChoice::Installed(font.path.clone()));
+                                                        out.font = Some(FontChoice::Installed(font.path.clone(), font.index));
                                                         ui.close();
                                                     }
                                                 }
@@ -235,7 +236,7 @@ pub(crate) fn panel(
                                                             .filter(|s| !s.is_empty())
                                                             .unwrap_or(&font.face);
                                                         if ui.button(label).clicked() {
-                                                            out.font = Some(FontChoice::Installed(font.path.clone()));
+                                                            out.font = Some(FontChoice::Installed(font.path.clone(), font.index));
                                                             ui.close();
                                                         }
                                                     }

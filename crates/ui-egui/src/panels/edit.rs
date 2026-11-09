@@ -306,9 +306,16 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             }
             Some(FontChoice::Load) => app.pick_files(crate::files::FilePurpose::TextFont { page: ed.page }, false),
             #[cfg(not(target_arch = "wasm32"))]
-            Some(FontChoice::Installed(path)) => app.use_paths(crate::files::FilePurpose::TextFont { page: ed.page }, &[path]),
+            // BailanCraft: a face of a collection (`.ttc`) is taken out into a font of its own.
+            Some(FontChoice::Installed(path, index)) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                match pdfcraft_fonts::system_faces::read_face(&path, index) {
+                    Some(bytes) => app.use_files(crate::files::FilePurpose::TextFont { page: ed.page }, vec![(name, bytes)]),
+                    None => app.notify_fmt("Couldn't read {name}.", &[("name", &name)]),
+                }
+            }
             #[cfg(target_arch = "wasm32")]
-            Some(FontChoice::Installed(_)) => {}
+            Some(FontChoice::Installed(..)) => {}
             None => {}
         }
         if changed {

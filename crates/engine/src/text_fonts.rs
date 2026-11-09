@@ -6,6 +6,23 @@ pub struct FontFile {
     pub path: PathBuf,
     pub family: String,
     pub face: String,
+    /// BailanCraft: the face's index in a font collection (`.ttc`); 0 for a single font.
+    pub index: u32,
+}
+
+/// BailanCraft: every face installed on this computer whose embedding permission lets a PDF
+/// keep it for editing (Cordia New, Angsana New, TH Sarabun New, Tahoma, …), including the
+/// faces of font collections. Unlike [`discover`], a face need not declare an open licence:
+/// the document is the user's, and the font's own permission decides, as in Word.
+pub fn installed_faces() -> Vec<FontFile> {
+    let mut faces: Vec<FontFile> = pdfcraft_fonts::system_faces::installed()
+        .iter()
+        .filter(|f| f.embeddable)
+        .map(|f| FontFile { path: f.path.clone(), family: f.family.clone(), face: f.full_name.clone(), index: f.index })
+        .collect();
+    faces.sort_by(|a, b| a.face.cmp(&b.face).then(a.path.cmp(&b.path)));
+    faces.dedup_by(|a, b| a.face == b.face);
+    faces
 }
 
 /// Standard user-installed font folders; discovery is performed only on request.
@@ -87,7 +104,7 @@ pub fn discover_budgeted(roots: &[PathBuf], mut budget: u64) -> Vec<FontFile> {
                 let key = font_content_key(&bytes);
                 if seen_face_content.insert((face.clone(), key)) {
                     budget = budget.saturating_sub(meta.len());
-                    files.push(FontFile { path, family, face });
+                    files.push(FontFile { path, family, face, index: 0 });
                 }
             }
         }

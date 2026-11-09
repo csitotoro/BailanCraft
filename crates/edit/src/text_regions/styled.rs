@@ -60,6 +60,16 @@ impl FontResolver<'_> {
         {
             return self.embed_face(face.name(), face.bytes, face.family, "the full source font could not be loaded").map(Some);
         }
+        // BailanCraft: the same face installed on this computer (a Thai PDF keeps only a subset
+        // of Cordia New, Angsana New, TH Sarabun New…), so the edit keeps the document's look.
+        for face in pdfcraft_fonts::system_faces::matching(&source.base_font) {
+            if let Some(bytes) = pdfcraft_fonts::system_faces::program(face)
+                && pdfcraft_fonts::embedding::covers(&bytes, text)
+            {
+                let key = format!("system {}#{}", face.path.display(), face.index);
+                return self.embed_face(key, &bytes, &face.postscript, "the installed font could not be loaded").map(Some);
+            }
+        }
         let Some(bytes) = self
             .programs
             .entry(source.font.clone())
@@ -657,6 +667,15 @@ fn shape_source(
             && let Ok(shaped) = pdfcraft_fonts::source_shaping::shape(&bytes, text)
         {
             return Ok(Some((bytes, shaped, family)));
+        }
+    }
+    // BailanCraft: the complete face, installed on this computer.
+    for face in pdfcraft_fonts::system_faces::matching(&family) {
+        if let Some(bytes) = pdfcraft_fonts::system_faces::program(face)
+            && pdfcraft_fonts::embedding::covers(&bytes, text)
+            && let Ok(shaped) = pdfcraft_fonts::source_shaping::shape(&bytes, text)
+        {
+            return Ok(Some((bytes.to_vec(), shaped, face.postscript.clone())));
         }
     }
     // BailanCraft: Thai documents usually embed only a subset of their font (CordiaNew,

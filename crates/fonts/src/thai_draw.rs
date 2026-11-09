@@ -57,48 +57,10 @@ pub fn static_thai_face() -> Option<&'static [u8]> {
 /// `bytes` (one sfnt, not a collection) without its variation tables, or `None` if malformed.
 fn drop_variations(bytes: &[u8]) -> Option<Vec<u8>> {
     const VARIATION: [&[u8; 4]; 8] = [b"fvar", b"gvar", b"avar", b"HVAR", b"VVAR", b"MVAR", b"STAT", b"cvar"];
-    let u16_at = |at: usize| bytes.get(at..at.checked_add(2)?).map(|b| u16::from_be_bytes([b[0], b[1]]));
-    let u32_at = |at: usize| bytes.get(at..at.checked_add(4)?).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
-    let version = bytes.get(0..4)?;
-    if version == b"ttcf" {
+    if bytes.get(0..4)? == b"ttcf" {
         return None;
     }
-    let count = usize::from(u16_at(4)?);
-    let mut tables: Vec<([u8; 4], u32, &[u8])> = Vec::with_capacity(count);
-    for i in 0..count {
-        let record = 12usize.checked_add(i.checked_mul(16)?)?;
-        let tag: [u8; 4] = bytes.get(record..record + 4)?.try_into().ok()?;
-        let checksum = u32_at(record + 4)?;
-        let offset = usize::try_from(u32_at(record + 8)?).ok()?;
-        let length = usize::try_from(u32_at(record + 12)?).ok()?;
-        let data = bytes.get(offset..offset.checked_add(length)?)?;
-        if !VARIATION.contains(&&tag) {
-            tables.push((tag, checksum, data));
-        }
-    }
-    tables.sort_by_key(|(tag, ..)| *tag);
-    let n = u16::try_from(tables.len()).ok()?;
-    let entry_selector = 15u16.saturating_sub(n.max(1).leading_zeros() as u16);
-    let search_range = (1u16 << entry_selector).saturating_mul(16);
-    let mut out = Vec::with_capacity(bytes.len());
-    out.extend_from_slice(version);
-    out.extend_from_slice(&n.to_be_bytes());
-    out.extend_from_slice(&search_range.to_be_bytes());
-    out.extend_from_slice(&entry_selector.to_be_bytes());
-    out.extend_from_slice(&n.saturating_mul(16).saturating_sub(search_range).to_be_bytes());
-    let mut offset = 12 + tables.len() * 16;
-    for (tag, checksum, data) in &tables {
-        out.extend_from_slice(tag);
-        out.extend_from_slice(&checksum.to_be_bytes());
-        out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
-        out.extend_from_slice(&u32::try_from(data.len()).ok()?.to_be_bytes());
-        offset = offset.checked_add(data.len().div_ceil(4) * 4)?;
-    }
-    for (_, _, data) in &tables {
-        out.extend_from_slice(data);
-        out.resize(out.len().div_ceil(4) * 4, 0);
-    }
-    Some(out)
+    crate::system_faces::rebuild(bytes, 0, &VARIATION)
 }
 
 /// Whether this build can draw Thai (it has the craft-fonts Thai face).

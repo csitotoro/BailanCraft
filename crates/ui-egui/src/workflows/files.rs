@@ -75,7 +75,8 @@ pub(crate) fn installed_font_files(ctx: &egui::Context, reload: bool) -> Option<
         if std::thread::Builder::new()
             .name("document-font-discovery".into())
             .spawn(move || {
-                let fonts = discover_fonts_safely(|| pdfcraft_engine::text_fonts::discover(&pdfcraft_engine::text_fonts::installed_directories()));
+                // BailanCraft: every installed face that may be embedded, not only openly licensed ones.
+                let fonts = discover_fonts_safely(pdfcraft_engine::text_fonts::installed_faces);
                 if let Ok(mut result) = result.lock() {
                     result.finish(fonts);
                 }
@@ -1225,6 +1226,7 @@ mod font_scan_tests {
             path: "installed.ttf".into(),
             family: "Installed".into(),
             face: "Installed".into(),
+            index: 0,
         }]);
         assert!(cache.begin(true), "a populated scan can discover newly installed fonts");
         assert!(cache.files.is_none());
