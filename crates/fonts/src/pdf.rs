@@ -144,6 +144,61 @@ pub fn embedded_sfnt_within(doc: &Document, font: &Dict, budget: &mut DecodeBudg
     None
 }
 
+/// BailanCraft: Word writes ำ (SARA AM) as NIKHAHIT + SARA AA, and its `/ToUnicode` maps that
+/// NIKHAHIT glyph to a space, so the text read back as "ช าระ" for "ชำระ". A code `/ToUnicode`
+/// calls white space, whose glyph has an outline and which the embedded program's own `cmap` gives
+/// as a character that is not white space, reads as that character.
+fn restore_blank_glyphs(doc: &Document, font: &Dict, m: &mut Metrics) {
+    use skrifa::MetadataProvider as _;
+    use skrifa::raw::TableProvider as _;
+    let blank: Vec<u32> =
+        m.unicode.explicit.iter().filter(|(_, (_, t))| !t.is_empty() && t.chars().all(char::is_whitespace)).map(|(c, _)| *c).collect();
+    // A font with one blank code (its space) is the usual case and is not read.
+    if blank.len() < 2 || blank.len() > 4096 {
+        return;
+    }
+    let Some(descendant) = dict(doc, font.get(b"DescendantFonts").and_then(|o| doc.resolve(o).as_array().and_then(|a| a.first()).cloned()).as_ref())
+    else {
+        return;
+    };
+    let Some(program) = dict(doc, descendant.get(b"FontDescriptor")).and_then(|d| d.get(b"FontFile2").cloned()) else { return };
+    let program = doc.resolve(&program);
+    let Object::Stream(stream) = program.as_ref() else { return };
+    let Ok(bytes) = stream.decoded_within(16 << 20) else { return };
+    let Ok(face) = skrifa::FontRef::from_index(&bytes, 0) else { return };
+    let Ok(loca) = face.loca(None) else { return };
+    let outlined = |gid: u32| loca.get_raw(gid as usize).zip(loca.get_raw(gid as usize + 1)).is_some_and(|(start, end)| end > start);
+    let gid_map = match descendant.get(b"CIDToGIDMap").map(|o| doc.resolve(o)).as_deref() {
+        None | Some(Object::Name(_)) => None,
+        Some(Object::Stream(map)) => match map.decoded_within(1 << 17) {
+            Ok(map) => Some(map),
+            Err(_) => return,
+        },
+        Some(_) => return,
+    };
+    let gid_of = |cid: u32| match &gid_map {
+        None => Some(cid),
+        Some(map) => {
+            let at = usize::try_from(cid).ok()?.checked_mul(2)?;
+            map.get(at..at.checked_add(2)?).map(|b| u32::from(u16::from_be_bytes([b[0], b[1]])))
+        }
+    };
+    let mut shown: HashMap<u32, char> = HashMap::new();
+    for (c, g) in face.charmap().mappings().take(65_535) {
+        if let Some(c) = char::from_u32(c).filter(|c| !c.is_whitespace() && !c.is_control()) {
+            shown.entry(g.to_u32()).or_insert(c);
+        }
+    }
+    for code in blank {
+        let Some(gid) = gid_of(m.cid(code)) else { continue };
+        if let Some(c) = shown.get(&gid).filter(|_| outlined(gid))
+            && let Some((_, text)) = m.unicode.explicit.get_mut(&code)
+        {
+            *text = crate::thai_text::standard(*c).to_string();
+        }
+    }
+}
+
 /// The CIDs (below 65 536) of a Type 0 font over an embedded TrueType program whose glyph has
 /// outline data, through `/CIDToGIDMap`; empty when the program or the map can't be read.
 /// Subsetters keep glyph ids and empty the glyphs they drop, so an empty glyph is a missing one.
@@ -657,6 +712,9 @@ impl Metrics {
             Codes::Ranges(r) => r.last().map_or(2, |x| x.0),
         };
         m.unicode = unicode_map(doc, font, m.composite);
+        if m.composite {
+            restore_blank_glyphs(doc, font, &mut m);
+        }
         if m.std14.is_some() {
             embedded_widths(doc, font, &mut m);
         }

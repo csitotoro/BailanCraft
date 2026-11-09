@@ -1044,7 +1044,18 @@ pub(crate) fn rewrite_styled_block(
         }
         Ok(width)
     };
-    let (rows, row_ranges, row_lines, row_soft, row_gap) = wrap_styled_rows(&chars, width, measure)?;
+    // BailanCraft: a lengthened row that would wrap onto text below the paragraph (Word writes
+    // table cells as separate lines, each as wide as its text) runs on to the right instead, as
+    // a one-row paragraph does.
+    let (rows, row_ranges, row_lines, row_soft, row_gap) = {
+        let wrapped = wrap_styled_rows(&chars, width, &measure)?;
+        let wide = (p.crop(doc)[2] - 36.0 - (block.rect[0] + dx)).max(width);
+        if style.width.is_none() && wrapped.0.len() > block.rows.len() && wide > width && rows_land_on_text(block, lines, dy, wrapped.0.len()) {
+            wrap_styled_rows(&chars, wide, &measure)?
+        } else {
+            wrapped
+        }
+    };
     let streams = content_streams(doc, &p.dict)?;
     let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
     let ops = pieces.parse().ops;
@@ -1114,7 +1125,8 @@ pub(crate) fn rewrite_styled_block(
     let widest = measured.iter().copied().fold(width, f64::max);
     // This path lays rows out along user-space baselines, so the paragraph is upright here.
     let reach = crate::Reach { rect: block.rect, offset: [dx, dy], width: widest, rows: rows.len(), pitch, upright: true };
-    let over = crate::revealed_under_paint(doc, page, block.invisible, reach.bounds(), &ops, at);
+    // BailanCraft: or when the spot is clipped smaller than the paragraph (Word clips each line).
+    let over = crate::revealed_under_paint(doc, page, block.invisible, reach.bounds(), &ops, at) || crate::clipped_out(&ops, at, reach.bounds());
     let initial = TextState::initial();
     let drawn_from = if over { &initial } else { after };
     let mut baseline = first.origin.baseline;
@@ -1298,4 +1310,19 @@ pub(crate) fn rewrite_styled_block(
     })?;
     crate::draw_on_top(doc, &p, o.ctm, &on_top)?;
     Ok(LineEdit { substituted })
+}
+
+/// BailanCraft: whether `rows` rows of `block` (moved down by `dy`) reach other text below it:
+/// the rows past its own, at its own row pitch, over text that isn't part of it.
+fn rows_land_on_text(block: &TextBlock, lines: &[TextLine], dy: f64, rows: usize) -> bool {
+    let own = block.rows.len().max(1);
+    let extra = f64::from(u32::try_from(rows.saturating_sub(own)).unwrap_or(u32::MAX));
+    let pitch = (block.rect[3] - block.rect[1]) / f64::from(u32::try_from(own).unwrap_or(u32::MAX));
+    let (top, bottom) = (block.rect[1] + dy, block.rect[1] + dy - extra * pitch);
+    if !(top.is_finite() && bottom.is_finite()) {
+        return false;
+    }
+    lines.iter().enumerate().filter(|(i, _)| !block.lines.contains(i)).any(|(_, l)| {
+        !l.text.trim().is_empty() && l.rect[0] < block.rect[2] && l.rect[2] > block.rect[0] && l.rect[3] > bottom && l.rect[1] < top
+    })
 }

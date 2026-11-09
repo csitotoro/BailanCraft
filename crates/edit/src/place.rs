@@ -582,3 +582,66 @@ pub(crate) fn text_op(x: f64, y: f64, text: &str) -> Vec<u8> {
     v.extend_from_slice(b" Tj\n");
     v
 }
+
+/// BailanCraft: whether a rectangle clip in force before operator `at` cuts off part of `reach`
+/// (user space). Word draws every line in `q … re W n … Q` of that line's height, so a paragraph
+/// rewritten there showed only the row that stayed inside it; such a rewrite is drawn on top of
+/// the page instead. A clip that isn't one rectangle (or can't be followed) is not judged.
+pub(crate) fn clipped_out(ops: &[pdfcraft_content::Op], at: usize, reach: [f64; 4]) -> bool {
+    use pdfcraft_content::Matrix;
+    type Rect = [f64; 4];
+    if !reach.iter().all(|v| v.is_finite()) {
+        return false;
+    }
+    let union = |a: Option<Rect>, b: Rect| a.map_or(b, |a: Rect| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]);
+    let mut ctm = Matrix([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    // The clip in force (None: no rectangle clip), and whether the path so far is rectangles only.
+    let mut clip: Option<Rect> = None;
+    let mut stack: Vec<(Matrix, Option<Rect>)> = Vec::new();
+    let mut path: Option<Rect> = None;
+    let mut rectangles = true;
+    let mut clipping = false;
+    for op in ops.iter().take(at) {
+        let number = |i: usize| op.operands.get(i).and_then(Object::as_f64);
+        match op.op.as_slice() {
+            b"q" if stack.len() < 256 => stack.push((ctm, clip)),
+            b"Q" => {
+                if let Some((m, c)) = stack.pop() {
+                    (ctm, clip) = (m, c);
+                }
+            }
+            b"cm" => {
+                if let (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) = (number(0), number(1), number(2), number(3), number(4), number(5)) {
+                    ctm = Matrix([a, b, c, d, e, f]).then(&ctm);
+                }
+            }
+            b"re" => {
+                if let (Some(x), Some(y), Some(w), Some(h)) = (number(0), number(1), number(2), number(3)) {
+                    let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)].map(|(x, y)| ctm.apply(x, y));
+                    let bounds = corners.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |r, p| {
+                        [r[0].min(p.0), r[1].min(p.1), r[2].max(p.0), r[3].max(p.1)]
+                    });
+                    path = Some(union(path, bounds));
+                }
+            }
+            b"m" | b"l" | b"c" | b"v" | b"y" | b"h" => rectangles = false,
+            b"W" | b"W*" => clipping = true,
+            b"n" | b"f" | b"F" | b"f*" | b"S" | b"s" | b"B" | b"B*" | b"b" | b"b*" => {
+                if clipping {
+                    match path.filter(|_| rectangles) {
+                        Some(p) => {
+                            let c = clip.map_or(p, |c| [c[0].max(p[0]), c[1].max(p[1]), c[2].min(p[2]), c[3].min(p[3])]);
+                            clip = Some(c);
+                        }
+                        // Not a rectangle: don't judge it.
+                        None => clip = None,
+                    }
+                }
+                (path, rectangles, clipping) = (None, true, false);
+            }
+            _ => {}
+        }
+    }
+    const SLACK: f64 = 0.5;
+    clip.is_some_and(|c| reach[0] < c[0] - SLACK || reach[1] < c[1] - SLACK || reach[2] > c[2] + SLACK || reach[3] > c[3] + SLACK)
+}

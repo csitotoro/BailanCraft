@@ -34,6 +34,8 @@ pub(super) struct TextDevice {
     actual_filtered: bool,
     actual_cropped: bool,
     partial_replacement: bool,
+    /// BailanCraft: per font, the character its own `cmap` gives each glyph ([`TextDevice::inked_blank`]).
+    font_chars: HashMap<u128, HashMap<u32, char>>,
 }
 
 /// An `/ActualText` replacement: the glyph standing for it in `TextDevice::glyphs` (none for an
@@ -118,6 +120,7 @@ impl TextDevice {
             actual_filtered: false,
             actual_cropped: false,
             partial_replacement: false,
+            font_chars: HashMap::new(),
         }
     }
 
@@ -287,6 +290,13 @@ impl<'a> Device<'a> for TextDevice {
         if !replaced && text.chars().all(char::is_control) {
             return;
         }
+        // BailanCraft: Word's `/ToUnicode` reads the NIKHAHIT of ำ as a space.
+        let text = match glyph {
+            Glyph::Outline(g) if !replaced && !text.is_empty() && text.chars().all(char::is_whitespace) => {
+                self.inked_blank(g).map_or(text, String::from)
+            }
+            _ => text,
+        };
         // BailanCraft: a Thai font's private-use mark forms read as the marks they show.
         let text = pdfcraft_fonts::thai_text::standard_text(text);
         // Glyph space → view space. Glyph space uses 1000 units per em for outline glyphs; the em
@@ -351,7 +361,7 @@ impl<'a> Device<'a> for TextDevice {
             Some((_, _, drawn)) => drawn,
             None => &mut self.glyphs,
         };
-        if !join_sara_am(drawn, &glyph) {
+        if !join_sara_am(drawn, &glyph) && !join_thai_mark(drawn, &glyph) {
             drawn.push((dir, direction, glyph));
         }
     }
@@ -532,6 +542,15 @@ fn join_sara_am(drawn: &mut [Drawn], aa: &TextGlyph) -> bool {
     if aa.text != "\u{0E32}" {
         return false;
     }
+    // NIKHAHIT (and a tone mark) already in the letter's cluster before it.
+    if let Some(last) = drawn.last_mut() {
+        let joined = format!("{}\u{0E32}", last.2.text);
+        if let std::borrow::Cow::Owned(composed) = pdfcraft_fonts::thai_text::compose_sara_am(&joined) {
+            last.2.text = composed;
+            take_in(&mut last.2, aa);
+            return true;
+        }
+    }
     let single = |at: Option<usize>| {
         let mut chars = at.and_then(|at| drawn.get(at)).map(|g| g.2.text.chars())?;
         chars.next().filter(|_| chars.next().is_none())
@@ -550,9 +569,42 @@ fn join_sara_am(drawn: &mut [Drawn], aa: &TextGlyph) -> bool {
     };
     let Some(am) = am.and_then(|at| drawn.get_mut(at)) else { return false };
     am.2.text = "\u{0E33}".into();
-    let r = &mut am.2.rect;
-    *r = [r[0].min(aa.rect[0]), r[1].min(aa.rect[1]), r[2].max(aa.rect[2]), r[3].max(aa.rect[3])];
-    am.2.quad = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+    take_in(&mut am.2, aa);
+    true
+}
+
+/// BailanCraft: `glyph`'s box grows to take in `other`'s.
+fn take_in(glyph: &mut TextGlyph, other: &TextGlyph) {
+    let r = &mut glyph.rect;
+    *r = [r[0].min(other.rect[0]), r[1].min(other.rect[1]), r[2].max(other.rect[2]), r[3].max(other.rect[3])];
+    glyph.quad = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+}
+
+/// Thai vowel signs and tone marks written above or below their letter.
+fn is_thai_mark(c: char) -> bool {
+    matches!(c, '\u{0E31}' | '\u{0E34}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}')
+}
+
+/// BailanCraft: a Thai mark drawn straight after the letter it sits on joins that letter's glyph,
+/// so copied text keeps it with its letter. Word places a mark a little right of where the next
+/// letter starts, and sorting by position read "แบ่ง" as "แบง่". `true` when `mark` was taken in.
+fn join_thai_mark(drawn: &mut [Drawn], mark: &TextGlyph) -> bool {
+    let mut chars = mark.text.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else { return false };
+    if !is_thai_mark(c) {
+        return false;
+    }
+    let Some(last) = drawn.last_mut() else { return false };
+    let thai = last.2.text.chars().last().is_some_and(|c| matches!(c, '\u{0E01}'..='\u{0E2E}') || is_thai_mark(c));
+    // Over or beside that letter: within half its height of either side, on the same line.
+    let (a, b) = (&last.2.rect, &mark.rect);
+    let reach = (a[3] - a[1]).abs().max(1.0) * 0.5;
+    let near = b[0] < a[2] + reach && b[2] > a[0] - reach && b[1] < a[3] && b[3] > a[1];
+    if !thai || !near || last.2.text.chars().count() >= 8 {
+        return false;
+    }
+    last.2.text.push(c);
+    take_in(&mut last.2, mark);
     true
 }
 
@@ -569,7 +621,7 @@ mod bailancraft_tests {
         let mut drawn: Vec<Drawn> = Vec::new();
         for (text, x) in glyphs {
             let g = glyph(text, *x);
-            if !join_sara_am(&mut drawn, &g.2) {
+            if !join_sara_am(&mut drawn, &g.2) && !join_thai_mark(&mut drawn, &g.2) {
                 drawn.push(g);
             }
         }
@@ -577,11 +629,55 @@ mod bailancraft_tests {
     }
 
     #[test]
+    fn a_thai_mark_is_copied_with_the_letter_it_sits_on() {
+        // Word places the tone mark of แบ่ง a little right of where ง starts.
+        assert_eq!(joined(&[("แ", 0.0), ("บ", 5.0), ("\u{0E48}", 9.0), ("ง", 10.0)]), ["แ", "บ\u{0E48}", "ง"]);
+        assert_eq!(
+            joined(&[("ด", 0.0), ("\u{0E31}", 3.0), ("ง", 5.0), ("น", 10.0), ("\u{0E35}", 13.0), ("\u{0E49}", 13.0)]),
+            ["ด\u{0E31}", "ง", "น\u{0E35}\u{0E49}"]
+        );
+        assert_eq!(joined(&[("a", 0.0), ("\u{0E48}", 1.0)]), ["a", "\u{0E48}"], "only on a Thai letter");
+        assert_eq!(joined(&[("บ", 0.0), ("\u{0E48}", 40.0)]), ["บ", "\u{0E48}"], "only beside it");
+    }
+
+    #[test]
     fn word_s_nikhahit_and_sara_aa_are_copied_as_sara_am() {
-        assert_eq!(joined(&[("ช", 0.0), ("\u{0E4D}", 1.0), ("า", 5.0), ("ร", 10.0)]), ["ช", "ำ", "ร"]);
-        assert_eq!(joined(&[("น", 0.0), ("\u{0E4D}", 1.0), ("\u{0E49}", 1.0), ("า", 5.0)]), ["น", "\u{0E49}", "ำ"]);
-        assert_eq!(joined(&[("น", 0.0), ("\u{0E49}", 1.0), ("\u{0E4D}", 1.0), ("า", 5.0)]), ["น", "\u{0E49}", "ำ"]);
+        // NIKHAHIT and the tone mark join their letter; SARA AA then makes ำ in that cluster.
+        assert_eq!(joined(&[("ช", 0.0), ("\u{0E4D}", 1.0), ("า", 5.0), ("ร", 10.0)]), ["ชำ", "ร"]);
+        assert_eq!(joined(&[("น", 0.0), ("\u{0E4D}", 1.0), ("\u{0E49}", 1.0), ("า", 5.0)]), ["น้ำ"]);
+        assert_eq!(joined(&[("น", 0.0), ("\u{0E49}", 1.0), ("\u{0E4D}", 1.0), ("า", 5.0)]), ["น้ำ"]);
+        // A NIKHAHIT with no letter beside it still makes ำ with the SARA AA.
+        assert_eq!(joined(&[("\u{0E4D}", 1.0), ("า", 5.0)]), ["ำ"]);
         assert_eq!(joined(&[("ก", 0.0), ("า", 5.0)]), ["ก", "า"], "SARA AA alone stays");
         assert_eq!(joined(&[("า", 5.0)]), ["า"]);
+    }
+}
+
+impl TextDevice {
+    /// BailanCraft: the character a glyph `/ToUnicode` calls white space really shows, when it has
+    /// an outline and the font program's own `cmap` gives it a character that is not white space.
+    fn inked_blank(&mut self, glyph: &hayro::hayro_interpret::font::OutlineGlyph) -> Option<char> {
+        use skrifa::MetadataProvider as _;
+        if glyph.outline().elements().is_empty() {
+            return None;
+        }
+        let key = glyph.font_cache_key();
+        if !self.font_chars.contains_key(&key) {
+            let mut chars = HashMap::new();
+            if let Some(data) = glyph.font_data()
+                && let Ok(font) = skrifa::FontRef::from_index((*data.data).as_ref(), 0)
+            {
+                for (c, g) in font.charmap().mappings().take(65_535) {
+                    if let Some(c) = char::from_u32(c).filter(|c| !c.is_whitespace() && !c.is_control()) {
+                        chars.entry(g.to_u32()).or_insert(c);
+                    }
+                }
+            }
+            if self.font_chars.len() >= 64 {
+                self.font_chars.clear();
+            }
+            self.font_chars.insert(key, chars);
+        }
+        self.font_chars.get(&key)?.get(&glyph.glyph_id().to_u32()).copied()
     }
 }

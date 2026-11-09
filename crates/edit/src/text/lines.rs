@@ -314,6 +314,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool) ->
             l.runs.clear();
         }
     }
+    compose_sara_am(&mut lines);
     // Lines of only spaces aren't editable text.
     lines.retain(|l| !l.text.trim().is_empty());
     Ok(lines)
@@ -621,6 +622,21 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
             l.runs.clear();
         }
     }
+    compose_sara_am(&mut lines);
     lines.retain(|l| !l.text.trim().is_empty());
     Ok((lines, w.budget.truncated))
+}
+
+/// BailanCraft: Word draws ำ (SARA AM) as NIKHAHIT and SARA AA, often each in its own text
+/// operator, so only the joined line reads "ชํา"; it reads "ชำ". The runs then no longer
+/// read as the line does, as after reordering.
+fn compose_sara_am(lines: &mut [TextLine]) {
+    for l in lines.iter_mut() {
+        let composed = match pdfcraft_fonts::thai_text::compose_sara_am(&l.text) {
+            std::borrow::Cow::Owned(composed) => composed,
+            std::borrow::Cow::Borrowed(_) => continue,
+        };
+        l.text = composed;
+        l.runs.clear();
+    }
 }

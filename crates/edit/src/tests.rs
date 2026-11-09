@@ -10835,12 +10835,81 @@ fn word_s_split_sara_am_reads_back_as_sara_am() {
     let mut font = doc.dict(&Object::Ref(pdfcraft_cos::ObjRef::new(5, 0))).unwrap();
     font.set(b"ToUnicode".to_vec(), Object::Ref(to_unicode));
     doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
-    for (shown, read) in [("ABC", "ชำ"), ("DBEC", "น้ำ"), ("DE", "น้")] {
-        let content = format!("BT /F1 12 Tf 72 700 Td ({shown}) Tj ET");
+    // Word also writes every glyph as its own `Tj`.
+    for (shown, read) in [
+        ("(ABC) Tj", "ชำ"),
+        ("(DBEC) Tj", "น้ำ"),
+        ("(DE) Tj", "น้"),
+        ("(A) Tj 6 0 Td (B) Tj 0 0 Td (C) Tj", "ชำ"),
+        ("(D) Tj 6 0 Td (B) Tj 0 0 Td (E) Tj 0 0 Td (C) Tj", "น้ำ"),
+    ] {
+        let content = format!("BT /F1 12 Tf 72 700 Td {shown} ET");
         let page = pdfcraft_model::pages(&doc).remove(0);
         let contents = page.dict.get(b"Contents").and_then(Object::as_ref).unwrap();
         doc.set(contents, Object::Stream(Stream::flate(Dict::new(), content.as_bytes())));
         let doc = reopen(&doc);
         assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, read, "{shown}");
     }
+}
+
+#[test]
+fn a_row_word_clips_to_its_own_height_is_rewritten_where_it_shows() {
+    // BailanCraft: Word draws every line in `q … re W n … Q` one line tall. A paragraph rewritten
+    // inside the last line's clip showed only that line; the rewrite is drawn on top instead.
+    let content = "q 0 696 600 16 re W n BT /F1 12 Tf 72 700 Td (First row) Tj ET Q \
+                   q 0 682 600 16 re W n BT /F1 12 Tf 72 686 Td (Second row) Tj ET Q";
+    let mut doc = text_page(content);
+    let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    assert_eq!(block.rows.len(), 2, "{:?}", block.editor_text);
+    let draft = block.editor_text.replacen("First", "Changed", 1);
+    text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    let page = pdfcraft_model::pages(&doc).remove(0);
+    let joined: Vec<u8> = crate::text::content_streams(&doc, &page.dict).unwrap().into_iter().flat_map(|(_, data)| data.into_iter().chain(*b"\n")).collect();
+    let ops = pdfcraft_content::Pieces::join(&[joined.as_slice()]).parse().ops;
+    let shows = |op: &pdfcraft_content::Op| op.is("Tj") || op.is("TJ");
+    let painted: Vec<usize> = ops.iter().enumerate().filter(|(_, op)| shows(op)).map(|(i, _)| i).collect();
+    assert!(!painted.is_empty());
+    for at in painted {
+        // Where each row is drawn, no clip cuts the paragraph's rows.
+        assert!(!crate::clipped_out(&ops, at, [72.0, 684.0, 160.0, 712.0]), "text drawn inside a one-line clip at op {at}");
+    }
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.replace('\n', " "), draft.replace('\n', " "));
+}
+
+#[test]
+fn clipped_out_follows_rectangle_clips_through_q_and_cm() {
+    let ops = |s: &str| pdfcraft_content::Pieces::join(&[s.as_bytes()]).parse().ops;
+    let page = ops("q 0 696 600 16 re W n BT ET Q BT ET");
+    assert!(crate::clipped_out(&page, 5, [72.0, 684.0, 160.0, 712.0]), "inside the one-line clip");
+    assert!(!crate::clipped_out(&page, 5, [72.0, 698.0, 160.0, 710.0]), "a row that fits it");
+    assert!(!crate::clipped_out(&page, 8, [72.0, 684.0, 160.0, 712.0]), "after Q the clip is gone");
+    let scaled = ops("q 2 0 0 2 0 0 cm 0 348 300 8 re W n BT ET Q");
+    assert!(crate::clipped_out(&scaled, 6, [72.0, 684.0, 160.0, 712.0]), "the clip is in user space");
+    let curve = ops("q 0 0 m 600 0 l 600 800 l h W n BT ET Q");
+    assert!(!crate::clipped_out(&curve, 8, [72.0, 684.0, 160.0, 712.0]), "a clip that isn't a rectangle isn't judged");
+}
+
+#[test]
+fn a_lengthened_row_runs_on_rather_than_wrapping_onto_the_text_below() {
+    // BailanCraft: Word writes table-cell text as separate lines, each as wide as its text.
+    // Typing into the widest one wrapped its end onto the next paragraph's first line.
+    // Rows 20 apart, and the next paragraph 14 below the last row, as in the quotation.
+    // Tagged as two paragraphs, as Word tags them.
+    let content = "/P <</MCID 0>> BDC BT /F1 12 Tf 20 TL 72 700 Td (Term of payment) Tj T* (Pay in twelve parts as follows) Tj T* (Part one) Tj ET EMC \
+                   /P <</MCID 1>> BDC BT /F1 12 Tf 72 646 Td (Part twelve is the rest) Tj ET EMC";
+    let mut doc = text_page(content);
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    let block = blocks.iter().position(|b| b.editor_text.starts_with("Term")).unwrap();
+    let rows = blocks[block].rows.len();
+    eprintln!("BEFORE {:?}", blocks.iter().map(|b| (&b.editor_text, b.rect)).collect::<Vec<_>>());
+    let draft = blocks[block].editor_text.replacen("twelve", "twelve (12)", 1);
+    text::rewrite_block(&mut doc, 0, block, Some(&draft), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    let edited = blocks.iter().find(|b| b.editor_text.starts_with("Term")).unwrap();
+    assert_eq!(edited.editor_text, draft, "the row ran on instead of wrapping");
+    assert_eq!(edited.rows.len(), rows);
+    let below = blocks.iter().find(|b| b.editor_text.starts_with("Part twelve")).unwrap();
+    assert!(edited.rect[1] > below.rect[3], "the paragraph stays above the next one: {:?} {:?}", edited.rect, below.rect);
 }

@@ -805,3 +805,39 @@ fn a_thai_fonts_private_use_mark_forms_read_as_thai_marks() {
     assert_eq!(map.get(&3).map(String::as_str), Some("\u{0E49}"));
     assert_eq!(map.get(&1).map(String::as_str), Some("ช"));
 }
+
+#[test]
+fn an_inked_glyph_tounicode_calls_a_space_reads_as_its_programs_character() {
+    use skrifa::MetadataProvider as _;
+    // BailanCraft: Word's ToUnicode maps the NIKHAHIT glyph of ำ to a space next to the real
+    // space ("ช าระ"). Here Inter's "A" glyph is mapped to a space the same way: the program's
+    // own cmap says what it shows, and the empty space glyph stays a space.
+    let inter = include_bytes!("../../../../assets/fonts/Inter-Regular.ttf");
+    let face = skrifa::FontRef::new(inter).unwrap();
+    let (a, space) = (face.charmap().map('A').unwrap().to_u32(), face.charmap().map(' ').unwrap().to_u32());
+    let mut doc = Document::new_empty();
+    let program = doc.add(Object::Stream(Stream::flate(Dict::new(), inter)));
+    let mut descriptor = Dict::new();
+    descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
+    descriptor.set(b"FontName".to_vec(), Object::name("ABCDEF+Inter-Regular"));
+    descriptor.set(b"FontFile2".to_vec(), Object::Ref(program));
+    let mut cid = Dict::new();
+    cid.set(b"Type".to_vec(), Object::name("Font"));
+    cid.set(b"Subtype".to_vec(), Object::name("CIDFontType2"));
+    cid.set(b"BaseFont".to_vec(), Object::name("ABCDEF+Inter-Regular"));
+    cid.set(b"FontDescriptor".to_vec(), Object::Dict(descriptor));
+    cid.set(b"CIDToGIDMap".to_vec(), Object::name("Identity"));
+    let cid = doc.add(Object::Dict(cid));
+    let cmap = format!("2 beginbfchar <{space:04X}> <0020> <{a:04X}> <0020> endbfchar");
+    let unicode = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
+    let mut font = Dict::new();
+    font.set(b"Type".to_vec(), Object::name("Font"));
+    font.set(b"Subtype".to_vec(), Object::name("Type0"));
+    font.set(b"BaseFont".to_vec(), Object::name("ABCDEF+Inter-Regular"));
+    font.set(b"Encoding".to_vec(), Object::name("Identity-H"));
+    font.set(b"DescendantFonts".to_vec(), Object::Array(vec![Object::Ref(cid)]));
+    font.set(b"ToUnicode".to_vec(), Object::Ref(unicode));
+    let m = Metrics::from_dict(&doc, &font);
+    assert_eq!(m.text_of(a).as_deref(), Some("A"));
+    assert_eq!(m.text_of(space).as_deref(), Some(" "));
+}
