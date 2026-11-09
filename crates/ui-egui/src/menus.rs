@@ -226,9 +226,13 @@ const SIGN: &[&str] = &[
     "sign.panel",
 ];
 const WINDOW: &[&str] = &["view.next_tab", "view.previous_tab"];
-const HELP: &[&str] =
-    // BailanCraft: no ArtCraft web page, website, Discord or upstream update check (engine::brand).
-    &["help.shortcuts", SEP, "help.github", SEP, "help.about"];
+// BailanCraft: no ArtCraft web page, website or Discord. Feedback and the update check come with
+// BailanCraft's own repository (engine::brand::REPOSITORY).
+const HELP: &[&str] = if pdfcraft_engine::brand::UPDATE_CHECK {
+    &["help.shortcuts", SEP, "help.feedback", "help.github", SEP, "help.check_updates", SEP, "help.about"]
+} else {
+    &["help.shortcuts", SEP, "help.github", SEP, "help.about"]
+};
 
 /// A registry shortcut as a craft-keymap chord: `command` is ⌘ (Ctrl elsewhere) and `mac_ctrl`
 /// the Control key on macOS. `None` for a key craft-keymap doesn't name.
@@ -699,6 +703,11 @@ mod tests {
         for spec in commands::COMMANDS.iter().filter(|s| s.menu.is_some()) {
             if spec.id == "file.open_recent" {
                 continue; // A submenu of the recent files.
+            }
+            // BailanCraft: feedback and the update check are in Help only with a repository.
+            if matches!(spec.id, "help.feedback" | "help.check_updates") && !pdfcraft_engine::brand::UPDATE_CHECK {
+                assert!(bar.find(&CommandRef::new(spec.id)).is_none(), "{} hidden without a repository", spec.id);
+                continue;
             }
             let it = item(&bar, &CommandRef::new(spec.id));
             let shortcut = spec.shortcut.or((spec.id == "edit.copy").then_some(crate::commands::COPY));

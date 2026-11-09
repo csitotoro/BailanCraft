@@ -408,7 +408,9 @@ pub const COMMANDS: &[CommandSpec] = &[
     // BailanCraft keeps only the upstream source link; the ArtCraft Discord, web pages and the
     // upstream update check are gone (engine::brand). The upstream source link stays as the credit;
     // its label avoids the word PdfCraft, which the UI rebrands.
+    c("help.feedback", "Report a problem or send feedback", HELP, None, Nothing, "message-square-text"),
     c("help.github", "Upstream source code (GitHub)", HELP, None, Nothing, "code-xml"),
+    c("help.check_updates", "Check for updates…", HELP, None, Nothing, "cloud"),
     c("help.about", "About PdfCraft", HELP, None, Nothing, "info"),
 ];
 

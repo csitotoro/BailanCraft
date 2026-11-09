@@ -26,9 +26,26 @@ pub const XDG_DIR: &str = "bailancraft";
 /// Folder beside the executable that switches on portable mode.
 pub const PORTABLE_DIR: &str = "BailanCraftData";
 
-/// Whether the app may ask the upstream release feed for updates. Off: that feed offers PdfCraft
-/// releases, which would replace BailanCraft. Turn on once BailanCraft has its own feed.
-pub const UPDATE_CHECK: bool = false;
+/// BailanCraft's GitHub repository, `owner/repo`, as a literal for `concat!`: where its source,
+/// issues (feedback) and releases (the update feed) live. Empty until the repository exists;
+/// fill in this one place and rebuild to turn on the feedback link and the update check.
+#[macro_export]
+macro_rules! bailancraft_repository {
+    () => {
+        ""
+    };
+}
+
+/// See [`bailancraft_repository!`].
+pub const REPOSITORY: &str = bailancraft_repository!();
+
+/// Where users report problems and send feedback (GitHub Issues of [`REPOSITORY`]).
+pub const ISSUES_URL: &str = concat!("https://github.com/", bailancraft_repository!(), "/issues");
+
+/// Whether the app asks BailanCraft's own release feed (GitHub Releases of [`REPOSITORY`]) for
+/// updates, and offers the feedback link: only once the repository is set. Never the upstream
+/// feed, which offers PdfCraft releases that would replace BailanCraft.
+pub const UPDATE_CHECK: bool = !REPOSITORY.is_empty();
 
 /// `text` with the upstream product name replaced by [`NAME`]. Borrowed when there is nothing
 /// to replace, which is nearly always.
@@ -46,6 +63,16 @@ mod tests {
         assert_eq!(rebrand("ยินดีต้อนรับสู่ PdfCraft"), "ยินดีต้อนรับสู่ BailanCraft");
         assert!(matches!(rebrand("Open"), Cow::Borrowed("Open")));
         assert_eq!(rebrand(""), "");
+    }
+
+    #[test]
+    fn repository_drives_the_feedback_link_and_update_check() {
+        assert_eq!(UPDATE_CHECK, !REPOSITORY.is_empty());
+        assert!(!REPOSITORY.starts_with("storytold/"), "never the upstream feed");
+        assert_eq!(ISSUES_URL, format!("https://github.com/{REPOSITORY}/issues"));
+        if UPDATE_CHECK {
+            assert_eq!(REPOSITORY.split('/').filter(|p| !p.is_empty()).count(), 2, "owner/repo: {REPOSITORY}");
+        }
     }
 
     #[test]

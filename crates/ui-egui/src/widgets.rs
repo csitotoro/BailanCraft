@@ -618,7 +618,7 @@ pub fn community_links(ui: &mut egui::Ui) -> Option<&'static str> {
     let mut clicked = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-        for l in pdfcraft_engine::links::LINKS {
+        for l in pdfcraft_engine::links::LINKS.iter().filter(|l| pdfcraft_engine::links::available(l)) {
             let resp = icon_pill(ui, l.icon, tl!(l.label), false);
             if resp.on_hover_text(l.url).clicked() {
                 clicked = Some(l.command);

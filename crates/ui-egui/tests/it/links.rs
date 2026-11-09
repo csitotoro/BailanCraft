@@ -23,8 +23,11 @@ fn no_discord_or_community_card() {
     assert!(h.query_by_label("Discord").is_none(), "no Discord button in the top bar");
     assert!(h.query_by_label("Join the ArtCraft community").is_none(), "no community card on Home");
     assert!(h.query_by_label("Join our Discord").is_none());
-    assert_eq!(links::LINKS.len(), 1, "only the upstream source link");
-    assert_eq!(links::LINKS[0].url, "https://github.com/storytold/pdfcraft");
+    // The upstream source link always; feedback only with BailanCraft's own repository.
+    let offered: Vec<&str> = links::LINKS.iter().filter(|l| links::available(l)).map(|l| l.command).collect();
+    assert!(offered.contains(&"help.github"));
+    assert_eq!(offered.contains(&"help.feedback"), pdfcraft_engine::brand::UPDATE_CHECK);
+    assert!(links::LINKS.iter().all(|l| !l.url.contains("discord") && !l.url.contains("getartcraft")));
 }
 
 #[test]
@@ -44,7 +47,7 @@ fn about_dialog_names_bailancraft_and_credits_pdfcraft() {
 
 #[test]
 fn help_commands_open_each_link() {
-    for l in links::LINKS {
+    for l in links::LINKS.iter().filter(|l| links::available(l)) {
         let mut h = harness(|_| {});
         assert!(h.state_mut().execute(l.command), "{}", l.command);
         assert_eq!(h.state().last_opened_url.as_deref(), Some(l.url));

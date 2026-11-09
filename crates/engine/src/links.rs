@@ -24,10 +24,19 @@ pub struct Link {
 
 /// In the order they are shown. BailanCraft shows only the upstream source (its licence credit);
 /// the ArtCraft Discord and web pages belong to the upstream brand.
-pub const LINKS: &[Link] = &[Link { command: "help.github", label: "Upstream source code (GitHub)", url: GITHUB, icon: "code-xml" }];
+pub const LINKS: &[Link] = &[
+    // Shown only once brand::REPOSITORY is set (`available`).
+    Link { command: "help.feedback", label: "Report a problem or send feedback", url: crate::brand::ISSUES_URL, icon: "message-square-text" },
+    Link { command: "help.github", label: "Upstream source code (GitHub)", url: GITHUB, icon: "code-xml" },
+];
+
+/// BailanCraft: whether `link` can be offered: the feedback link needs brand::REPOSITORY.
+pub fn available(link: &Link) -> bool {
+    link.command != "help.feedback" || crate::brand::UPDATE_CHECK
+}
 
 pub fn for_command(id: &str) -> Option<&'static Link> {
-    LINKS.iter().find(|l| l.command == id)
+    LINKS.iter().find(|l| l.command == id).filter(|l| available(l))
 }
 
 /// The kinds of address a document may ask PdfCraft to open: web pages and email. Anything

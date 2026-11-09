@@ -80,6 +80,10 @@ impl PdfCraftApp {
     /// Whether a registered command can run now. The engine judges the document (security,
     /// contents, undo history); view state it can't see is checked here.
     pub(crate) fn command_enabled(&self, spec: &CommandSpec) -> bool {
+        // BailanCraft: feedback and the update check need BailanCraft's own repository.
+        if matches!(spec.id, "help.feedback" | "help.check_updates") && !pdfcraft_engine::brand::UPDATE_CHECK {
+            return false;
+        }
         // Undo and Redo act on the Combine files list while its tab shows.
         if self.combine_showing() && matches!(spec.needs, commands::Needs::Undo | commands::Needs::Redo) {
             return self.combine_can_undo(spec.needs == commands::Needs::Undo);
@@ -121,6 +125,10 @@ impl PdfCraftApp {
 
     /// Why the command can't run right now, for the user.
     fn disabled_reason(&self, spec: &CommandSpec) -> String {
+        // BailanCraft: see command_enabled.
+        if matches!(spec.id, "help.feedback" | "help.check_updates") && !pdfcraft_engine::brand::UPDATE_CHECK {
+            return "ยังไม่ได้ตั้งค่าหน้าเผยแพร่ของ BailanCraft (This build has no BailanCraft repository set.)".to_string();
+        }
         match spec.needs {
             commands::Needs::Undo => tl!("Nothing to undo").to_string(),
             commands::Needs::Redo => tl!("Nothing to redo").to_string(),

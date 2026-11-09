@@ -218,7 +218,9 @@ fn the_check_at_start_offers_the_prompt_and_later_dismisses_it() {
 #[test]
 fn bailancraft_never_asks_the_upstream_release_feed() {
     use std::sync::atomic::Ordering::SeqCst;
-    assert!(!pdfcraft_engine::brand::UPDATE_CHECK);
+    if pdfcraft_engine::brand::UPDATE_CHECK {
+        return; // BailanCraft's own feed is set: the upstream-flow tests above apply.
+    }
     let (mut h, calls) = started_with(r#"{"update_check_at_start": true}"#);
     run_until_asked(&mut h, &calls, std::time::Duration::from_millis(800));
     h.state_mut().check_for_updates();
@@ -226,5 +228,7 @@ fn bailancraft_never_asks_the_upstream_release_feed() {
     assert_eq!(calls.load(SeqCst), 0, "nothing reaches the release feed");
     assert!(h.query_by_label_contains("is available").is_none());
     assert!(h.query_by_label_contains("Checking for updates").is_none());
-    assert!(pdfcraft_engine::commands::command("help.check_updates").is_none(), "no menu command for it");
+    assert!(pdfcraft_engine::commands::command("help.check_updates").is_some(), "registered");
+    assert!(!h.state_mut().execute("help.check_updates"), "refused without a repository");
+    assert!(!h.state_mut().execute("help.feedback"));
 }
