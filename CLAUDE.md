@@ -23,6 +23,9 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
     (`branded` in `crates/ui-egui/src/i18n.rs`). Don't edit catalog keys or `tl!` strings to rename.
   - Keep crate names, command ids, `PDFCRAFT_*` env vars and other internal `pdfcraft` identifiers.
   - Mark fork-only edits with a short `BailanCraft:` comment.
+- `craft-print` is pinned ahead of upstream v0.18.1 (rev `7ee35a9`, upstream `3763f120a`): its
+  winprint has a multi-threaded Direct2D factory; the older one crashed printing on Intel GPUs
+  (heap corruption in `windows.data.pdf.dll`). A guard test in `pdfcraft-print` keeps it there.
 - Never ship ArtCraft names or logos (`docs/brand/LICENSE-brand.txt`). Credit PdfCraft in About.
 
 ## Build and run (Windows)

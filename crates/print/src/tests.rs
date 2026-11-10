@@ -1245,3 +1245,24 @@ fn contents_pieces_join_with_a_space_across_a_trailing_comment() {
     let printed_ctrl = impose(&with_newline, &settings(vec![0], Layout::Size(SizeMode::Actual))).unwrap();
     assert_eq!(form_strings(printed_ctrl), [b"HIDDEN".to_vec(), b"SHOWN".to_vec()]);
 }
+
+/// BailanCraft: printing on Windows crashed the app (heap corruption, or a read at 0xA) while
+/// Windows.Data.Pdf drew a page through Direct2D on a hardware driver: winprint made its
+/// Direct2D factory single-threaded, and Windows.Data.Pdf draws on threads of its own
+/// (winprint f256775 makes it multi-threaded). The locked winprint must not go back to a
+/// revision from before that fix.
+#[test]
+fn the_windows_print_backend_keeps_its_multithreaded_direct2d_factory() {
+    let lock = include_str!("../../../Cargo.lock");
+    let winprint: Vec<&str> = lock
+        .split("[[package]]")
+        .filter(|package| package.contains("\nname = \"winprint\"\n"))
+        .filter_map(|package| package.lines().find(|line| line.starts_with("source = ")))
+        .collect();
+    assert_eq!(winprint.len(), 1, "one winprint in the lock: {winprint:?}");
+    // Revisions without the multi-threaded factory: the one PdfCraft v0.18.1 shipped and the
+    // ones before it on this branch.
+    for crashing in ["5f80b9baf6b58937c401656634e42d33f00ddf49", "3c60c53", "406ed73"] {
+        assert!(!winprint[0].contains(crashing), "winprint {crashing} prints with a single-threaded Direct2D factory: {}", winprint[0]);
+    }
+}
