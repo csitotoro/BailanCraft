@@ -10981,3 +10981,22 @@ fn added_text_in_an_installed_face_is_drawn_in_it_and_keeps_it() {
     assert!(err.contains("isn't installed"), "{err}");
     assert_eq!(list_added(&doc), before);
 }
+
+#[test]
+fn a_mark_typed_after_a_letter_the_source_subset_has_stays_in_one_font_with_it() {
+    // BailanCraft: typing Thai into a Word form, letters its subset has came from the subset and
+    // the rest (marks among them) from the complete face, so a mark began a run of its own:
+    // "mixed contextual runs are not yet supported". Here the subset (WinAnsi Inter) has "e" but
+    // not the combining acute; the complete Inter has both.
+    for (content, from, to) in [
+        ("BT /F1 12 Tf 72 700 Td (Stable text) Tj ET", "text", "te\u{0301}xt"),
+        ("BT /F1 12 Tf 14 TL 72 700 Td (First row) Tj T* (Second row) Tj ET", "Second", "Se\u{0301}cond"),
+    ] {
+        let mut doc = embedded_program_page(content, "Inter-Regular");
+        let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+        let draft = block.editor_text.replacen(from, to, 1);
+        text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle::default()).unwrap_or_else(|e| panic!("{to}: {e}"));
+        let doc = reopen(&doc);
+        assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.replace('\n', " "), draft.replace('\n', " "), "{to}");
+    }
+}

@@ -172,6 +172,30 @@ impl CharacterPreparation<'_> {
             let source = lines.get(index).unwrap_or(first);
             let start = range.start;
             let thai_font = if thai_block && thai_span(&range, index) { resolver.thai_face()? } else { None };
+            // BailanCraft: text that is shaped (Thai, combining marks) and that the source font
+            // shows only in part goes whole into one complete face: the source's own, installed
+            // or bundled. Letter by letter, the letters a subset has stayed in it and the rest
+            // (a tone mark, say) went to the complete face, and a mark can't start a run.
+            let span_font = if thai_font.is_none() {
+                let text: String = draft.get(range.clone()).unwrap_or_default().chars().filter(|c| !matches!(c, '\n' | '\r')).collect();
+                let requested = overrides.get(&index).and_then(|range| range.resource.as_deref()).or(style.resource.as_deref());
+                let partial = requested.is_none()
+                    && pdfcraft_fonts::source_shaping::required(&text)
+                    && !resolver.metrics.get(&source.font).is_some_and(|metrics| source_encodes(metrics, &text));
+                // Asked only when needed: finding a complete face embeds it.
+                if !partial {
+                    None
+                } else if let Some(name) = resolver.encodable_font(source, &text, None)? {
+                    Some(name)
+                } else if pdfcraft_fonts::thai_draw::has_thai(&text) {
+                    resolver.thai_face()?
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let thai_font = thai_font.or(span_font);
             for (offset, ch) in draft.get(range).unwrap_or_default().char_indices() {
                 if ch == '\n' {
                     chars.push((ch, index, source.font.clone()));
