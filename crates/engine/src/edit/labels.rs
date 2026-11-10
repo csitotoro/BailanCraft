@@ -236,6 +236,7 @@ impl Edit {
             | Edit::FillAnnotation { .. }
             | Edit::PartOpacity { .. }
             | Edit::FontSizeAnnotation { .. }
+            | Edit::FontFaceAnnotation { .. }
             | Edit::BorderColorAnnotation { .. }
             | Edit::BorderShapeAnnotation { .. }
             | Edit::SetAnnotationInfo { .. } => Label::of("Change comment properties"),

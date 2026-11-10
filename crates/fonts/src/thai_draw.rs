@@ -73,6 +73,74 @@ fn is_mark(c: char) -> bool {
     matches!(c, '\u{0E31}' | '\u{0E34}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}')
 }
 
+/// BailanCraft: the private key on an appearance stream naming the installed face (its PostScript
+/// name) its lines were drawn in with [`show_line_in`]. [`materialize`] reads and removes it.
+pub const FACE_KEY: &[u8] = b"PCThaiFace";
+
+/// What draws `c`: the installed `face` when it has it, else the Thai face for Thai, else
+/// (`None`) the builder's own Latin font.
+fn kind_of(c: char, face: Option<ShapedScript>) -> Option<ShapedScript> {
+    if let Some(face) = face
+        && crate::shaped_has(face, c)
+    {
+        return Some(face);
+    }
+    is_thai(c).then_some(ShapedScript::Thai)
+}
+
+/// `line` cut into runs by what draws them ([`kind_of`]), in order. A mark stays in the run of
+/// the letter before it.
+fn runs_in(line: &str, face: Option<ShapedScript>) -> Vec<(Option<ShapedScript>, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut current: Option<Option<ShapedScript>> = None;
+    for (at, c) in line.char_indices() {
+        let kind = match current {
+            Some(kind) if is_mark(c) => kind,
+            _ => kind_of(c, face),
+        };
+        if current.is_some_and(|k| k != kind) {
+            if let (Some(k), Some(run)) = (current, line.get(start..at)) {
+                out.push((k, run));
+            }
+            start = at;
+        }
+        current = Some(kind);
+    }
+    if let (Some(k), Some(run)) = (current, line.get(start..))
+        && !run.is_empty()
+    {
+        out.push((k, run));
+    }
+    out
+}
+
+/// A run shaped by the face `kind` names; `None` when it can't be.
+fn shape_run(kind: ShapedScript, run: &str) -> Option<Vec<ShapedCluster>> {
+    match kind {
+        ShapedScript::Thai => shape_thai(run).ok(),
+        face => crate::shape_face(run, false, face).ok(),
+    }
+}
+
+/// [`width`] with an installed `face` drawing what it has ([`show_line_in`]).
+pub fn width_in(face: Option<ShapedScript>, line: &str, size: f64, latin: impl Fn(&str, f64) -> f64) -> f64 {
+    let mut total = 0.0;
+    for (kind, run) in runs_in(line, face) {
+        match kind.map(|k| shape_run(k, run)) {
+            Some(Some(clusters)) => total += clusters.iter().map(|c| c.advance).sum::<f64>() * size,
+            Some(None) => return latin(line, size),
+            None => total += latin(run, size),
+        }
+    }
+    total
+}
+
+/// Record on the stream dictionary that its lines were drawn in the installed face `postscript`.
+pub fn record_face(d: &mut Dict, postscript: &str) {
+    d.set(FACE_KEY.to_vec(), Object::String(PdfString::text(postscript)));
+}
+
 /// `line` cut into runs of Thai and of everything else, in order.
 fn runs(line: &str) -> Vec<(bool, &str)> {
     let mut out: Vec<(bool, &str)> = Vec::new();
@@ -203,10 +271,11 @@ pub fn letters(text: &str) -> Vec<&str> {
 }
 
 /// What makes two clusters the same Type 3 glyph: text, glyphs, offsets and advance (bit for bit).
-type Key = (String, Vec<(u32, u64, u64)>, u64);
+/// BailanCraft: and the face, since two faces number their glyphs apart.
+type Key = (ShapedScript, String, Vec<(u32, u64, u64)>, u64);
 
 fn key(c: &ShapedCluster) -> Key {
-    (c.text.clone(), c.glyphs.iter().map(|(id, [x, y])| (*id, x.to_bits(), y.to_bits())).collect(), c.advance.to_bits())
+    (c.script, c.text.clone(), c.glyphs.iter().map(|(id, [x, y])| (*id, x.to_bits(), y.to_bits())).collect(), c.advance.to_bits())
 }
 
 /// The distinct Thai clusters of an appearance, in the order they were first drawn.
@@ -251,12 +320,30 @@ const FONT_PREFIX: &str = "BCTh";
 /// [`show_line`] with the Thai fonts named `{prefix}0`, `{prefix}1`, … : for text drawn straight
 /// into page content, where several marks share the page's resources and each needs its own names.
 pub fn show_line_as(glyphs: &mut Glyphs, line: &str, size: f64, latin_font: &str, encode: impl Fn(&str) -> Vec<u8>, prefix: &str) -> Vec<u8> {
+    show_line_with(glyphs, None, line, size, latin_font, encode, prefix)
+}
+
+/// BailanCraft: [`show_line`] with the installed `face` drawing everything it has (Latin too);
+/// record it with [`record_face`] so [`materialize`] draws the same glyphs.
+pub fn show_line_in(glyphs: &mut Glyphs, face: Option<ShapedScript>, line: &str, size: f64, latin_font: &str, encode: impl Fn(&str) -> Vec<u8>) -> Vec<u8> {
+    show_line_with(glyphs, face, line, size, latin_font, encode, FONT_PREFIX)
+}
+
+fn show_line_with(
+    glyphs: &mut Glyphs,
+    face: Option<ShapedScript>,
+    line: &str,
+    size: f64,
+    latin_font: &str,
+    encode: impl Fn(&str) -> Vec<u8>,
+    prefix: &str,
+) -> Vec<u8> {
     let font_name = |i: usize| format!("{prefix}{i}");
     let mut out = Vec::new();
     let mut font: Option<usize> = None;
     let latin_tf = format!("/{latin_font} {} Tf ", num(size));
-    for (thai, run) in runs(line) {
-        let shaped = if thai { shape_thai(run).ok() } else { None };
+    for (kind, run) in runs_in(line, face) {
+        let shaped = kind.and_then(|k| shape_run(k, run));
         match shaped {
             Some(clusters) => {
                 for c in &clusters {
@@ -299,10 +386,15 @@ pub fn record_lines(d: &mut Dict, lines: &[String]) {
 /// face) the stream is left as it was, key and all, and nothing is added to `doc`.
 pub fn materialize(doc: &mut Document, stream: &mut Stream) -> Result<(), GlyphError> {
     let Some(Object::Array(lines)) = stream.dict.get(LINES_KEY).cloned() else { return Ok(()) };
+    // BailanCraft: the installed face the lines were drawn in, which must still be here.
+    let face = match stream.dict.get(FACE_KEY).and_then(Object::as_string).map(PdfString::to_text) {
+        Some(name) => Some(crate::installed_face(&name).ok_or(GlyphError::NoFont)?),
+        None => None,
+    };
     let mut glyphs = Glyphs::new();
     for line in lines.iter().filter_map(Object::as_string).map(PdfString::to_text) {
         // Codes are assigned exactly as `show_line` assigned them.
-        let _ = show_line(&mut glyphs, &line, 1.0, "F", |_| Vec::new());
+        let _ = show_line_in(&mut glyphs, face, &line, 1.0, "F", |_| Vec::new());
     }
     let fonts = write_fonts(doc, &glyphs, FONT_PREFIX)?;
     let mut res = match stream.dict.get(b"Resources").map(|o| doc.resolve(o)) {
@@ -319,6 +411,7 @@ pub fn materialize(doc: &mut Document, stream: &mut Stream) -> Result<(), GlyphE
     res.set(b"Font".to_vec(), Object::Dict(font_dict));
     stream.dict.set(b"Resources".to_vec(), Object::Dict(res));
     stream.dict.remove(LINES_KEY);
+    stream.dict.remove(FACE_KEY);
     Ok(())
 }
 
@@ -326,11 +419,11 @@ pub fn materialize(doc: &mut Document, stream: &mut Stream) -> Result<(), GlyphE
 /// [`show_line_as`] named them. Every outline is read before anything is written, so on error
 /// (no Thai face) nothing is added.
 pub fn write_fonts(doc: &mut Document, glyphs: &Glyphs, prefix: &str) -> Result<Vec<(String, ObjRef)>, GlyphError> {
-    let mut outlines: HashMap<u32, GlyphOutline> = HashMap::new();
+    let mut outlines: HashMap<(ShapedScript, u32), GlyphOutline> = HashMap::new();
     for c in &glyphs.clusters {
         for (id, _) in &c.glyphs {
-            if !outlines.contains_key(id) {
-                outlines.insert(*id, shaped_glyph(ShapedScript::Thai, *id)?);
+            if !outlines.contains_key(&(c.script, *id)) {
+                outlines.insert((c.script, *id), shaped_glyph(c.script, *id)?);
             }
         }
     }
@@ -346,7 +439,7 @@ fn num(v: f64) -> String {
 
 /// A Type 3 font with `clusters` as codes 1…, each drawn from the Thai face's glyph `outlines`,
 /// with a ToUnicode map giving each code its cluster's text.
-fn type3(doc: &mut Document, clusters: &[ShapedCluster], outlines: &HashMap<u32, GlyphOutline>) -> ObjRef {
+fn type3(doc: &mut Document, clusters: &[ShapedCluster], outlines: &HashMap<(ShapedScript, u32), GlyphOutline>) -> ObjRef {
     let mut charprocs = Dict::new();
     let mut differences = vec![Object::Int(1)];
     let mut widths = Vec::with_capacity(clusters.len());
@@ -358,7 +451,7 @@ fn type3(doc: &mut Document, clusters: &[ShapedCluster], outlines: &HashMap<u32,
         let mut paths = Vec::new();
         let mut ink: Option<[f64; 4]> = None;
         for (id, [dx, dy]) in &c.glyphs {
-            let Some(g) = outlines.get(id) else { continue };
+            let Some(g) = outlines.get(&(c.script, *id)) else { continue };
             for contour in &g.contours {
                 for (j, p) in contour.iter().enumerate() {
                     paths.extend(format!("{} {} {}\n", num((p[0] + dx) * 1000.0), num((p[1] + dy) * 1000.0), if j == 0 { "m" } else { "l" }).bytes());
@@ -395,7 +488,9 @@ fn type3(doc: &mut Document, clusters: &[ShapedCluster], outlines: &HashMap<u32,
     }
     cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
     let cmap = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
-    let family = ShapedScript::Thai.font().map_or("Thai", |f| f.family);
+    // BailanCraft: an installed face by its PostScript name, when it drew every glyph.
+    let face = clusters.first().map(|c| c.script).filter(|s| *s != ShapedScript::Thai && clusters.iter().all(|c| c.script == *s));
+    let family = face.and_then(ShapedScript::face_name).unwrap_or_else(|| ShapedScript::Thai.font().map_or("Thai", |f| f.family).to_owned());
     let mut descriptor = Dict::new();
     descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
     descriptor.set(b"FontName".to_vec(), Object::name(&family.replace(' ', "")));

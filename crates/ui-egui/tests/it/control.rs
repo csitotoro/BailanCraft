@@ -1803,6 +1803,7 @@ fn control_quit_retains_inactive_fill_sign_typing_after_cancel() {
         color: [0.0; 3],
         border: pdfcraft_ui_egui::fill_sign::TextBorder::NONE,
         focus: false,
+        face: None,
     });
     h.state_mut().active = None;
     assert!(!h.state().session.get(h.state().views[0].id).unwrap().dirty);

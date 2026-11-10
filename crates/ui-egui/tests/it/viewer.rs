@@ -1054,6 +1054,7 @@ fn the_window_title_marks_a_draft_that_is_not_applied_yet() {
         color: [0.0; 3],
         border: pdfcraft_ui_egui::fill_sign::TextBorder::NONE,
         focus: false,
+        face: None,
     });
     h.run_steps(2);
     let s = h.state();

@@ -387,6 +387,10 @@ pub fn add_annotation(doc: &mut Document, new: &NewAnnotation, meta: &Meta) -> R
             let size = if font_size.is_finite() && *font_size > 0.0 { font_size.clamp(1.0, 400.0) } else { 12.0 };
             d.set(b"DA".to_vec(), free_text_da(style.color, style.border_color, size));
             d.set(b"Q".to_vec(), Object::Int(0));
+            // BailanCraft: the installed face the text is drawn in.
+            if let Some(face) = style.face.as_deref().filter(|f| !f.is_empty() && f.len() <= 128) {
+                d.set(b"BCFace".to_vec(), PdfString::text(face));
+            }
             if let Some(f) = style.fill {
                 d.set(b"C".to_vec(), rgb(f));
             }

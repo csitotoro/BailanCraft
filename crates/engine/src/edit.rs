@@ -279,6 +279,13 @@ pub enum Edit {
         index: usize,
         size: f64,
     },
+    /// BailanCraft: draw a text box's, typewriter text's or callout's text in an installed face
+    /// (its PostScript name), or in the standard font again (`None`).
+    FontFaceAnnotation {
+        page: usize,
+        index: usize,
+        face: Option<String>,
+    },
     /// Give a text box, typewriter text or callout a border colour of its own (`None`: the
     /// text's again).
     BorderColorAnnotation {

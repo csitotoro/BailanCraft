@@ -348,6 +348,9 @@ pub struct PdfCraftApp {
     pub fill_tool: fill_sign::FillTool,
     /// Colour for new Fill & Sign text and dates, kept across launches.
     pub fill_text_color: [f64; 3],
+    /// BailanCraft: the installed face (PostScript name) new Fill & Sign text and dates are
+    /// drawn in, kept across launches; `None`: the standard font.
+    pub fill_text_face: Option<String>,
     /// Border around new Fill & Sign text and dates, in points (0: none), until PdfCraft quits:
     /// each launch starts from [`Self::fill_text_default`].
     pub fill_text_border: f64,

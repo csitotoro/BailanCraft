@@ -218,6 +218,8 @@ pub struct TypeBox {
     /// The border around the text.
     pub border: TextBorder,
     pub focus: bool,
+    /// BailanCraft: the installed face (PostScript name) the text is drawn in; `None`: the standard font.
+    pub face: Option<String>,
 }
 
 /// The border around typed text: its width in points (0: none), its own colour (`None`: the
@@ -263,6 +265,14 @@ fn to_user(xf: &PageXform, info: &DocInfo, page: usize, p: Pos2) -> [f64; 2] {
 fn new(page: usize, shape: Shape, contents: String, author: &str) -> Edit {
     let style = Style::default_for(&shape);
     Edit::AddAnnotation(NewAnnotation { page, shape, style, contents, author: author.to_string() })
+}
+
+/// BailanCraft: `edit` (typed text being added) with its text drawn in the installed face `face`.
+pub fn in_face(mut edit: Edit, face: Option<&str>) -> Edit {
+    if let Edit::AddAnnotation(new) = &mut edit {
+        new.style.face = face.map(str::to_owned);
+    }
+    edit
 }
 
 /// A typewriter annotation sized to its text, its displayed top-left at `at` on a page turned by
@@ -496,6 +506,8 @@ pub(crate) struct PageInput<'a> {
     pub(crate) text_size: f64,
     pub(crate) text_color: [f64; 3],
     pub(crate) text_border: TextBorder,
+    /// BailanCraft: the installed face new text is drawn in.
+    pub(crate) text_face: Option<&'a str>,
     pub(crate) signature: Option<&'a SavedSig>,
     pub(crate) initials: Option<&'a SavedSig>,
     pub(crate) preview: &'a mut Option<(SavedSig, egui::TextureHandle)>,
@@ -506,7 +518,7 @@ pub(crate) struct PageInput<'a> {
 /// Preview and clicks with a Fill & Sign tool on one page.
 pub(crate) fn page_input(cx: PageToolContext<'_>, input: PageInput<'_>, free: bool, view: &mut DocView) -> Option<FillAction> {
     let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
-    let PageInput { tool, text_size, text_color, text_border, signature, initials, preview, author, date_text } = input;
+    let PageInput { tool, text_size, text_color, text_border, text_face, signature, initials, preview, author, date_text } = input;
     let pointer = ptr.within(xf.rect)?;
     let p = info.pages.get(page)?;
     let at = to_user(xf, info, page, pointer);
@@ -546,28 +558,27 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, input: PageInput<'_>, free: bo
                 color: text_color,
                 border: text_border,
                 focus: true,
+                face: text_face.map(str::to_owned),
             });
             open.filter(|tb| !tb.text.trim().is_empty()).map(|tb| {
-                FillAction::Edit(Box::new(typed_with(
-                    tb.page,
-                    tb.at,
-                    &tb.text,
-                    tb.size,
-                    crate::comments::page_rotation(info, tb.page),
-                    author,
-                    TypedLook { color: tb.color, border: tb.border },
+                FillAction::Edit(Box::new(in_face(
+                    typed_with(
+                        tb.page,
+                        tb.at,
+                        &tb.text,
+                        tb.size,
+                        crate::comments::page_rotation(info, tb.page),
+                        author,
+                        TypedLook { color: tb.color, border: tb.border },
+                    ),
+                    tb.face.as_deref(),
                 )))
             })
         }
         FillTool::Date => Some(match date_text {
-            Ok(text) => FillAction::Edit(Box::new(typed_with(
-                page,
-                top,
-                text,
-                text_size,
-                rotation,
-                author,
-                TypedLook { color: text_color, border: text_border },
+            Ok(text) => FillAction::Edit(Box::new(in_face(
+                typed_with(page, top, text, text_size, rotation, author, TypedLook { color: text_color, border: text_border }),
+                text_face,
             ))),
             Err(why) => FillAction::Refused(why.clone()),
         }),
@@ -624,7 +635,12 @@ pub(crate) fn type_box(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
             let Some(t) = view.fill_text.as_mut() else { return };
             // The box is white in every theme, so the caret must not follow the theme (pale in dark mode) (#655).
             ui.visuals_mut().text_cursor.stroke.color = crate::edit_text_ui::caret_color_on(Color32::WHITE);
-            let font = egui::FontId::proportional((t.size as f32 * zoom).max(8.0));
+            // BailanCraft: in the installed face chosen for it, once the interface has it.
+            let size = (t.size as f32 * zoom).max(8.0);
+            let font = match t.face.as_deref().and_then(|face| crate::edit_text_ui::installed_face_family(ui.ctx(), face)) {
+                Some(family) => egui::FontId::new(size, family),
+                None => egui::FontId::proportional(size),
+            };
             let natural = ui.fonts_mut(|f| f.layout_no_wrap(t.text.clone(), font.clone(), Color32::BLACK).size().x);
             let margin = egui::Margin::symmetric(4, 2);
             // Include the field padding and a pixel for layout rounding in the measured width.
@@ -692,7 +708,7 @@ pub(crate) fn type_box(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         let tb = view.fill_text.take()?;
         if !tb.text.trim().is_empty() {
             let look = TypedLook { color: tb.color, border: tb.border };
-            return Some(typed_with(tb.page, tb.at, &tb.text, tb.size, crate::comments::page_rotation(info, tb.page), author, look));
+            return Some(in_face(typed_with(tb.page, tb.at, &tb.text, tb.size, crate::comments::page_rotation(info, tb.page), author, look), tb.face.as_deref()));
         }
     }
     None

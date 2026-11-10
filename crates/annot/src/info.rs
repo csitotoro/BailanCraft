@@ -226,6 +226,9 @@ pub struct Props {
     pub fill_opacity: Option<f64>,
     /// How opaque a text box's, typewriter text's or callout's text is drawn.
     pub text_opacity: Option<f64>,
+    /// BailanCraft: text boxes, typewriter text and callouts: the installed face (PostScript name,
+    /// `/BCFace`) its text is drawn in; `None`: the standard font.
+    pub face: Option<String>,
 }
 
 /// The current properties of the comment at `(page, index)`.
@@ -257,6 +260,7 @@ pub fn props(doc: &Document, page: usize, index: usize) -> Option<Props> {
         fillable: fillable(&subtype),
         fill: fill_of(d),
         font_size: (subtype == "FreeText").then(|| appearance::parse_da(d).1),
+        face: (subtype == "FreeText").then(|| text_value(doc, d, b"BCFace")).flatten().filter(|f| !f.is_empty()),
         border_color: (subtype == "FreeText").then(|| appearance::da_border(d)).flatten(),
         border_shape: (subtype == "FreeText" && !d.contains(b"CL")).then(|| BorderShape::of(d)),
         fill_opacity: fillable(&subtype).then(|| appearance::part_opacity(d).fill),

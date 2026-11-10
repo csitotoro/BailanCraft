@@ -855,6 +855,69 @@ pub fn set_font_size(doc: &mut Document, page: usize, index: usize, size: f64, m
     result
 }
 
+/// BailanCraft: draw a text box's, typewriter text's or callout's text in the installed face
+/// `face` (its PostScript name), or as before (Helvetica, Thai in the Thai face) with `None`.
+/// Typewriter text (Fill & Sign) is sized to its text, so its box takes the face's widths.
+pub fn set_font_face(doc: &mut Document, page: usize, index: usize, face: Option<&str>, meta: &Meta) -> Result<(), AnnotError> {
+    let (_, r) = annot_ref(doc, page, index)?;
+    unlocked(doc, r)?;
+    let d = annot_dict(doc, r);
+    if d.name(b"Subtype") != Some(b"FreeText") {
+        return Err(AnnotError::Invalid("only text boxes, typewriter text and callouts have a font".into()));
+    }
+    let face = face.filter(|f| !f.is_empty());
+    if let Some(f) = face
+        && (f.len() > 128 || pdfcraft_fonts::installed_face(f).is_none())
+    {
+        return Err(AnnotError::Invalid(format!("the font {f} isn't installed on this computer; choose another font")));
+    }
+    refuse_foreign_text(doc, &d)?;
+    let before = d;
+    doc.update_dict(r, |d| {
+        match face {
+            Some(f) => d.set(b"BCFace".to_vec(), PdfString::text(f)),
+            None => {
+                d.remove(b"BCFace");
+            }
+        }
+        touch(d, meta);
+    })?;
+    let typewriter = before.name(b"IT") == Some(b"FreeTextTypeWriter") && !before.contains(b"CL");
+    let result = if is_snug(&before) {
+        match snug_refit(doc, r) {
+            Some(fit) => apply_text_box(doc, r, fit, meta, false),
+            None => redraw_or_restore(doc, r, before.clone()),
+        }
+    } else if typewriter {
+        match face_fit(doc, r) {
+            Some(fit) => apply_text_box(doc, r, fit, meta, false),
+            None => redraw_or_restore(doc, r, before.clone()),
+        }
+    } else {
+        redraw_or_restore(doc, r, before.clone())
+    };
+    if result.is_err() {
+        doc.set(r, Object::Dict(before));
+    }
+    result
+}
+
+/// BailanCraft: typewriter text's box sized to its lines in its face: its top-left kept.
+fn face_fit(doc: &Document, r: ObjRef) -> Option<[f64; 4]> {
+    let d = annot_dict(doc, r);
+    let (_, size) = appearance::parse_da(&d);
+    let pad = 2.0 + border_width_of(&d);
+    let tb = text_box_of(&d)?;
+    let (x0, top) = (tb[0].min(tb[2]), tb[1].max(tb[3]));
+    let face = d.get(b"BCFace").and_then(Object::as_string).map(PdfString::to_text).and_then(|f| pdfcraft_fonts::installed_face(&f));
+    let text = text_value(doc, &d, b"Contents").unwrap_or_default();
+    let longest = text.lines().map(|l| pdfcraft_fonts::thai_draw::width_in(face, l, size, appearance::text_width)).fold(0.0, f64::max);
+    let lines = f64::from(u32::try_from(text.lines().count().max(1)).unwrap_or(u32::MAX));
+    let w = (longest + 2.0 * pad + 4.0).max(10.0);
+    let fit = [x0, top - lines * size * 1.2 - 2.0 * pad - 2.0, x0 + w, top];
+    fit.iter().all(|v| v.is_finite()).then_some(fit)
+}
+
 /// Whether a comment has a fill: `/IC` for shapes, `/C` for FreeText (§12.5.6).
 pub fn fillable(subtype: &str) -> bool {
     matches!(subtype, "Square" | "Circle" | "Polygon" | "FreeText")

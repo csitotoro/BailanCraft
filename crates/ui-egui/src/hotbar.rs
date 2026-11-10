@@ -428,11 +428,17 @@ fn active_tool_controls(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ve
             }
         }
         let resp = icons::button(ui, "a-large-small", 32.0, false, tl!("Font size"));
-        let resized = egui::Popup::menu(&resp)
+        // BailanCraft: the font is chosen here too, below the size: the selected text's own when
+        // one is selected, else the one for new text.
+        let current = match selected_fill_text(app) {
+            Some((page, index)) => app.active_ids().and_then(|(_, id)| app.session.get(id)?.comment_props(page, index)).and_then(|p| p.face),
+            None => app.fill_text_face.clone(),
+        };
+        let (resized, chosen) = egui::Popup::menu(&resp)
             .align(egui::RectAlign::RIGHT_START)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                ui.set_min_width(180.0);
+                ui.set_min_width(260.0);
                 ui.label(egui::RichText::new(tl!("Font size")).font(theme::semibold(12.0)));
                 let size = ui.add(
                     egui::Slider::new(&mut app.fill_text_size, crate::fill_sign::MIN_TEXT_SIZE..=crate::fill_sign::MAX_TEXT_SIZE)
@@ -442,9 +448,17 @@ fn active_tool_controls(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ve
                 // #1274: the size also applies to the Fill & Sign text that is selected,
                 // once per change (a typed value, or the end of a drag), so a drag adds
                 // one undo step and not one per frame.
-                (size.changed() && !size.dragged()) || size.drag_stopped()
+                let resized = (size.changed() && !size.dragged()) || size.drag_stopped();
+                #[cfg(not(target_arch = "wasm32"))]
+                let chosen = {
+                    ui.separator();
+                    fill_text_font_list(ui, current.as_deref())
+                };
+                #[cfg(target_arch = "wasm32")]
+                let chosen = None;
+                (resized, chosen)
             })
-            .is_some_and(|popup| popup.inner);
+            .map_or((false, None), |popup| popup.inner);
         let size = app.fill_text_size;
         if resized
             && let Some((page, index)) = selected_fill_text(app)
@@ -457,6 +471,9 @@ fn active_tool_controls(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ve
         }
         // After the text's own controls, so they keep their place in a bar that scrolls.
         fill_text_border_controls(ui, app, selected_fill_text(app), vertical);
+        if let Some(face) = chosen {
+            choose_fill_text_face(app, face);
+        }
     }
     if let QuickTool::Comment(tool) = app.quick_tool {
         controls_divider(ui, t, vertical);
@@ -951,5 +968,62 @@ mod tests {
         assert!(matches_search(ink, "comment.ink"), "command ID must still match");
         assert!(!matches_search(ink, "introuvable"));
         crate::i18n::set_current(crate::i18n::Lang::EN);
+    }
+}
+
+/// BailanCraft: Fill & Sign's font list for typed text, in the Font size popup: Helvetica (with
+/// Thai in the Thai face) or a face installed on this computer. `current` is shown as chosen.
+/// The choice, if one was made (`Some(None)`: Helvetica).
+#[cfg(not(target_arch = "wasm32"))]
+fn fill_text_font_list(ui: &mut egui::Ui, current: Option<&str>) -> Option<Option<String>> {
+    ui.label(egui::RichText::new(tl!("Font")).font(theme::semibold(12.0)));
+    let mut chosen: Option<Option<String>> = None;
+    if ui.selectable_label(current.is_none(), "Helvetica").clicked() {
+        chosen = Some(None);
+    }
+    match crate::files::installed_font_files(ui.ctx(), false) {
+        None => {
+            ui.label(tl!("Finding document fonts…"));
+        }
+        // The scan has run, so the installed faces are at hand.
+        Some(_) => {
+            let search_id = ui.id().with("fill-font-search");
+            let mut query = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
+            if ui.add(egui::TextEdit::singleline(&mut query).hint_text(tl!("Search…")).desired_width(f32::INFINITY)).changed() {
+                ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
+            }
+            let query = query.trim().to_lowercase();
+            let mut faces: Vec<&pdfcraft_fonts::system_faces::SystemFace> = pdfcraft_fonts::system_faces::installed()
+                .iter()
+                .filter(|f| f.embeddable && (query.is_empty() || f.full_name.to_lowercase().contains(&query)))
+                .collect();
+            faces.sort_by_key(|f| f.full_name.trim_start_matches(|c: char| !c.is_alphanumeric()).to_lowercase());
+            faces.dedup_by(|a, b| a.postscript == b.postscript);
+            egui::ScrollArea::vertical().max_height(300.0).min_scrolled_height(240.0).show(ui, |ui| {
+                for face in faces {
+                    if ui.selectable_label(current == Some(face.postscript.as_str()), &face.full_name).clicked() {
+                        chosen = Some(Some(face.postscript.clone()));
+                    }
+                }
+            });
+        }
+    }
+    if chosen.is_some() {
+        ui.close();
+    }
+    chosen
+}
+
+/// BailanCraft: Fill & Sign text in `face` from now on: new text, the text being typed and the
+/// selected text.
+fn choose_fill_text_face(app: &mut PdfCraftApp, face: Option<String>) {
+    app.fill_text_face = face.clone();
+    if let Some((index, _)) = app.active_ids()
+        && let Some(open) = app.views.get_mut(index).and_then(|v| v.fill_text.as_mut())
+    {
+        open.face = face.clone();
+    }
+    if let Some((page, index)) = selected_fill_text(app) {
+        app.apply_edit(Edit::FontFaceAnnotation { page, index, face });
     }
 }

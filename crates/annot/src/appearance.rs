@@ -1095,8 +1095,12 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     let mut out = c.into_bytes();
     // BailanCraft: Thai is shaped and drawn from the Thai face in Type 3 fonts, which
     // `draw::apply_appearance` adds to the document (fonts::thai_draw); rows end between words.
-    let thai = thai_draw::available() && thai_draw::has_thai(&text);
-    let measure = |s: &str, z: f64| if thai { thai_draw::width(s, z, text_width) } else { text_width(s, z) };
+    // BailanCraft: an installed face chosen for the text (`/BCFace`) draws all of it, Latin too.
+    // Without the face on this computer the text is drawn as before.
+    let face_name = d.get(b"BCFace").and_then(Object::as_string).map(PdfString::to_text).filter(|s| !s.is_empty());
+    let face = face_name.as_deref().and_then(pdfcraft_fonts::installed_face);
+    let thai = face.is_some() || (thai_draw::available() && thai_draw::has_thai(&text));
+    let measure = |s: &str, z: f64| if thai { thai_draw::width_in(face, s, z, text_width) } else { text_width(s, z) };
     let lines = if thai { thai_draw::wrap(&text, size, width, measure) } else { wrap(&text, size, width) };
     let mut glyphs = thai_draw::Glyphs::new();
     let mut thai_lines: Vec<String> = Vec::new();
@@ -1115,8 +1119,8 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
             _ => rect[0] + pad,
         };
         out.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
-        if thai && thai_draw::has_thai(&line) {
-            out.extend(thai_draw::show_line(&mut glyphs, &line, size, "Helv", win_ansi));
+        if face.is_some() || (thai && thai_draw::has_thai(&line)) {
+            out.extend(thai_draw::show_line_in(&mut glyphs, face, &line, size, "Helv", win_ansi));
             thai_lines.push(line);
         } else {
             out.extend(literal(&win_ansi(&line)));
@@ -1128,6 +1132,11 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     res.set(b"Font".to_vec(), helvetica_resource());
     let mut stream = form(full, &out, res);
     thai_draw::record_lines(&mut stream.dict, &thai_lines);
+    if let (Some(name), Some(_)) = (&face_name, face)
+        && !thai_lines.is_empty()
+    {
+        thai_draw::record_face(&mut stream.dict, name);
+    }
     if let Some(m) = matrix {
         stream.dict.set(b"Matrix".to_vec(), Object::Array(m.iter().copied().map(Object::Real).collect()));
     }

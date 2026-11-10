@@ -1531,6 +1531,7 @@ fn saving_flattens_fill_and_sign_only_when_the_preference_is_on() {
         color: [0.0; 3],
         border: pdfcraft_ui_egui::fill_sign::TextBorder::NONE,
         focus: false,
+        face: None,
     });
     let kept = dir.join("kept.pdf");
     app.save_override = Some(kept.to_string_lossy().into_owned());
@@ -1550,6 +1551,7 @@ fn saving_flattens_fill_and_sign_only_when_the_preference_is_on() {
         color: [0.0; 3],
         border: pdfcraft_ui_egui::fill_sign::TextBorder::NONE,
         focus: false,
+        face: None,
     });
     app.flatten_fill_sign_on_save = true;
     let flat = dir.join("flat.pdf");
@@ -2533,4 +2535,44 @@ fn fill_sign_enter_adds_lines_outside_click_commits_and_escape_cancels() {
     fill_key(&mut h, egui::Key::Escape);
     assert!(h.state().views[0].fill_text.is_none());
     assert_eq!(h.state().session.save_bytes(id).unwrap(), saved, "Escape cancels without writing");
+}
+
+/// BailanCraft: Fill & Sign text can be drawn in a face installed on the computer (Inter stands
+/// in for Cordia New and the like): the Font button is in the bar, new text takes the font, the
+/// box being typed in carries it, it survives a settings restore, and the selected text changes.
+#[test]
+fn fill_text_font_reaches_new_and_selected_text() {
+    assert!(pdfcraft_fonts::register_face(include_bytes!("../../../../assets/fonts/Inter-Regular.ttf").to_vec()).is_some());
+    let mut h = harness();
+    h.state_mut().execute("sign.fill.text");
+    h.run_steps(2);
+    // The font list is in the Font size popup.
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Font size").click();
+    h.run_steps(2);
+    h.get_by_label("Helvetica");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Font size").click();
+    h.run_steps(2);
+    h.state_mut().fill_text_face = Some("Inter-Regular".into());
+    click(&mut h, 50.0, 250.0);
+    assert_eq!(h.state().views[0].fill_text.as_ref().and_then(|t| t.face.clone()).as_deref(), Some("Inter-Regular"));
+    h.event(egui::Event::Text("In a face".into()));
+    h.run_steps(1);
+    commit_typed_text(&mut h);
+    h.run_steps(3);
+    let face_of = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        let doc = s.session.get(s.views[0].id).unwrap();
+        let a = doc.info.annotations.iter().find(|a| a.contents.as_deref() == Some("In a face")).cloned().unwrap();
+        (a.page, a.index, doc.comment_props(a.page, a.index).and_then(|p| p.face))
+    };
+    let (page, index, face) = face_of(&h);
+    assert_eq!(face.as_deref(), Some("Inter-Regular"), "new text is drawn in the chosen face");
+    let settings = h.state().persist();
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&settings);
+    assert_eq!(restored.fill_text_face.as_deref(), Some("Inter-Regular"));
+    // The selected text back to the standard font.
+    assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::FontFaceAnnotation { page, index, face: None }));
+    h.run_steps(2);
+    assert_eq!(face_of(&h).2, None);
 }

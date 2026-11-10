@@ -82,6 +82,9 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
   the Text tool's `AddedText.face` (PostScript name, stored as `/BCFace`) draws the whole box as
   shaped outlines (`ShapedScript::Face`, `installed_face`/`register_face`). Re-editing such a box
   needs the face installed.
+  Fill & Sign text (FreeText) takes one too: `Style.face` / `/BCFace`, drawn by `thai_draw::show_line_in`
+  (face recorded under `PCThaiFace` for `materialize`), set with `Edit::FontFaceAnnotation`; its
+  list is in the Font size popup of the Fill & Sign bar.
 - Word PDFs: `/ToUnicode` maps the NIKHAHIT of ำ to a space (`restore_blank_glyphs`), lines sit in
   one-line clips (`place::clipped_out` draws the rewrite on top), shifted marks use U+F700–F71A
   (`fonts::thai_text`).

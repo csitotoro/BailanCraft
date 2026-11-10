@@ -2893,3 +2893,48 @@ fn thai_office_stamps() {
         assert_eq!(pdfcraft_fonts::undrawn_mark(&d), None);
     }
 }
+
+/// BailanCraft: Fill & Sign text in a face installed on the computer (Inter stands in for Cordia
+/// New and the like): all of its text is drawn from that face, the box takes the face's widths,
+/// and it can go back to the standard font. A face this computer doesn't have is refused.
+#[test]
+fn fill_sign_text_in_an_installed_face() {
+    assert!(pdfcraft_fonts::register_face(include_bytes!("../../../assets/fonts/Inter-Regular.ttf").to_vec()).is_some());
+    let mut doc = fixture();
+    let face_of = |doc: &Document, d: &Dict| -> Option<Vec<u8>> {
+        let n = d.get(b"AP").map(|a| doc.resolve(a)).and_then(|a| a.as_dict().and_then(|a| a.reference(b"N")))?;
+        let obj = doc.get(n);
+        let Object::Stream(s) = &*obj else { return None };
+        assert!(s.dict.get(pdfcraft_fonts::thai_draw::FACE_KEY).is_none(), "the private key is removed");
+        let res = doc.resolve(s.dict.get(b"Resources")?);
+        let fonts = doc.resolve(res.as_dict()?.get(b"Font")?);
+        let font = doc.get(fonts.as_dict()?.reference(b"BCTh0")?);
+        let descriptor = doc.resolve(font.as_dict()?.get(b"FontDescriptor")?);
+        descriptor.as_dict()?.name(b"FontName").map(<[u8]>::to_vec)
+    };
+    let mut typed = new(0, Shape::Typewriter { rect: [100.0, 600.0, 400.0, 620.0], font_size: 12.0 });
+    typed.contents = "Hello face".into();
+    typed.style.face = Some("Inter-Regular".into());
+    let t = add_annotation(&mut doc, &typed, &meta("t")).unwrap();
+    let d = list(&doc, 0)[t].clone();
+    assert_eq!(text(&d, b"BCFace"), "Inter-Regular");
+    let ap = ap_content(&doc, &d);
+    assert!(ap.contains("/BCTh0 12 Tf") && !ap.contains("(Hello"), "the Latin text too is drawn from the face: {ap}");
+    assert_eq!(face_of(&doc, &d).as_deref(), Some(b"Inter-Regular".as_slice()));
+    // Back to the standard font, and to the face again: the box fits the face's widths.
+    set_font_face(&mut doc, 0, t, None, &meta("t")).unwrap();
+    let d = list(&doc, 0)[t].clone();
+    assert!(d.get(b"BCFace").is_none());
+    assert!(ap_content(&doc, &d).contains("(Hello face) Tj"));
+    set_font_face(&mut doc, 0, t, Some("Inter-Regular"), &meta("t")).unwrap();
+    let d = list(&doc, 0)[t].clone();
+    let face = pdfcraft_fonts::installed_face("Inter-Regular");
+    let wide = pdfcraft_fonts::thai_draw::width_in(face, "Hello face", 12.0, |_, _| 0.0);
+    let rect: Vec<f64> = d.get(b"Rect").unwrap().as_array().unwrap().iter().filter_map(Object::as_f64).collect();
+    let padding = rect[2] - rect[0] - wide;
+    assert!((4.0..=16.0).contains(&padding), "the box fits the text in the face: {rect:?} for {wide}");
+    // A face this computer doesn't have: refused, nothing changes.
+    let before = list(&doc, 0)[t].clone();
+    assert!(set_font_face(&mut doc, 0, t, Some("NoSuchFace-Regular"), &meta("t")).is_err());
+    assert_eq!(list(&doc, 0)[t], before);
+}

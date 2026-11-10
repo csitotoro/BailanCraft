@@ -654,6 +654,9 @@ pub struct Style {
     pub fill_opacity: Option<f64>,
     /// A text box's text's own opacity, 0–1 (`/PCTextOpacity`); `None`: as the fill's.
     pub text_opacity: Option<f64>,
+    /// BailanCraft: the installed face (PostScript name, `/BCFace`) a text box's or typewriter
+    /// text's text is drawn in; `None`: Helvetica, with Thai in the Thai face.
+    pub face: Option<String>,
 }
 
 /// The style properties changed by one annotation edit. `None` leaves a property unchanged.
@@ -694,6 +697,7 @@ impl Default for Style {
             text_opacity: None,
             border_color: None,
             border_shape: BorderShape::Rectangle,
+            face: None,
         }
     }
 }

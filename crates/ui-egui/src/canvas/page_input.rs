@@ -267,6 +267,7 @@ fn tool_input(
         fill_text_size,
         fill_text_color,
         fill_text_border,
+        fill_text_face,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -297,6 +298,7 @@ fn tool_input(
             text_size: fill_text_size,
             text_color: fill_text_color,
             text_border: fill_text_border,
+            text_face: fill_text_face,
             signature: signature.as_ref(),
             initials: initials.as_ref(),
             preview: frame.signature_preview,
