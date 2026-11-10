@@ -111,6 +111,13 @@ pub fn register_face(bytes: Vec<u8>) -> Option<ShapedScript> {
     u16::try_from(faces.len() - 1).ok().map(ShapedScript::Face)
 }
 
+/// BailanCraft: the program of the installed (or registered) face `postscript`, as
+/// [`installed_face`] loads it: for showing that face in the interface.
+pub fn installed_face_program(postscript: &str) -> Option<&'static [u8]> {
+    let script = installed_face(postscript)?;
+    face(script).map(|(font, _)| font.data().as_bytes())
+}
+
 /// Whether the face of `script` has a glyph for `c`.
 pub fn shaped_has(script: ShapedScript, c: char) -> bool {
     face(script).is_some_and(|(font, _)| font.charmap().map(c).is_some())

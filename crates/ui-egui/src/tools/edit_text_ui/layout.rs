@@ -34,6 +34,53 @@ pub(crate) fn editor_font(look: &pdfcraft_engine::AddedText, size: f32) -> FontI
     FontId::new(size, family)
 }
 
+/// BailanCraft: [`editor_font`] for added text, in its installed face once the interface has it
+/// ([`installed_face_family`]), so the box being typed in shows the font chosen for it.
+pub(crate) fn added_editor_font(ctx: &egui::Context, look: &pdfcraft_engine::AddedText, size: f32) -> FontId {
+    match look.face.as_deref().and_then(|face| installed_face_family(ctx, face)) {
+        Some(family) => FontId::new(size, family),
+        None => editor_font(look, size),
+    }
+}
+
+/// BailanCraft: the interface font family that shows the installed face `postscript`, when the
+/// interface has it. Otherwise it is loaded (one at a time: a newly chosen face replaces the last)
+/// and ready on a later frame; until then `None`, and the box shows the standard font.
+pub(crate) fn installed_face_family(ctx: &egui::Context, postscript: &str) -> Option<FontFamily> {
+    const PREFIX: &str = "bc-face-";
+    let key = pdfcraft_fonts::embedding::face_key(postscript);
+    if key.is_empty() {
+        return None;
+    }
+    let name = format!("{PREFIX}{key}");
+    let family = FontFamily::Name(name.clone().into());
+    if ctx.fonts(|f| f.definitions().families.contains_key(&family)) {
+        return Some(family);
+    }
+    // New fonts take effect on the next pass: ask once, and again only if they were since replaced
+    // (a theme or language change installs the interface fonts afresh).
+    let asked = egui::Id::new((PREFIX, key.as_str()));
+    let pass = ctx.cumulative_pass_nr();
+    if ctx.data(|d| d.get_temp::<u64>(asked)).is_some_and(|at| pass.saturating_sub(at) < 30) {
+        return None;
+    }
+    ctx.data_mut(|d| d.insert_temp(asked, pass));
+    let program = pdfcraft_fonts::installed_face_program(postscript)?;
+    let mut definitions = ctx.fonts(|f| f.definitions().clone());
+    definitions.font_data.retain(|data, _| !data.starts_with(PREFIX));
+    definitions.families.retain(|f, _| !matches!(f, FontFamily::Name(n) if n.starts_with(PREFIX)));
+    definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.to_vec())));
+    // What the face lacks comes from the interface's own fonts.
+    let mut stack = vec![name];
+    if let Some(fallback) = definitions.families.get(&FontFamily::Proportional) {
+        stack.extend(fallback.iter().cloned());
+    }
+    definitions.families.insert(family, stack);
+    ctx.set_fonts(definitions);
+    ctx.request_repaint();
+    None
+}
+
 pub(super) fn color32(color: [f64; 3]) -> Color32 {
     Color32::from_rgb(
         (color[0].clamp(0.0, 1.0) * 255.0).round() as u8,
@@ -281,4 +328,39 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
 pub(crate) fn caret_color_on(fill: Color32) -> Color32 {
     let luma = 299 * u32::from(fill.r()) + 587 * u32::from(fill.g()) + 114 * u32::from(fill.b());
     if luma > 127_500 { Color32::BLACK } else { Color32::WHITE }
+}
+
+#[cfg(test)]
+mod bailancraft_face_tests {
+    use super::*;
+
+    /// BailanCraft: the box being typed in shows the installed face chosen for it, without
+    /// committing the text first (Inter stands in for an installed face).
+    #[test]
+    fn the_box_being_typed_in_switches_to_the_chosen_face() {
+        assert!(pdfcraft_fonts::register_face(include_bytes!("../../../../../assets/fonts/Inter-Regular.ttf").to_vec()).is_some());
+        let look = pdfcraft_engine::AddedText { face: Some("Inter-Regular".into()), ..Default::default() };
+        let plain = pdfcraft_engine::AddedText::default();
+        let mut ready = false;
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(200.0, 100.0)).build_ui_state(
+            move |ui, fonts: &mut Vec<FontId>| {
+                let ctx = ui.ctx();
+                if !ready {
+                    crate::theme::install_fonts(ctx);
+                    ready = true;
+                    return;
+                }
+                fonts.push(added_editor_font(ctx, &look, 14.0));
+                assert_eq!(added_editor_font(ctx, &plain, 14.0), editor_font(&plain, 14.0), "a standard family is unchanged");
+                // The font laid out with must exist in this frame's interface fonts.
+                if let Some(font) = fonts.last() {
+                    ctx.fonts_mut(|f| f.layout_no_wrap("ทดสอบ Inter".into(), font.clone(), Color32::BLACK));
+                }
+            },
+            Vec::new(),
+        );
+        h.run_steps(6);
+        let shown = h.state().last().cloned();
+        assert_eq!(shown.map(|f| f.family), Some(FontFamily::Name("bc-face-interregular".into())));
+    }
 }
