@@ -841,3 +841,25 @@ fn an_inked_glyph_tounicode_calls_a_space_reads_as_its_programs_character() {
     assert_eq!(m.text_of(a).as_deref(), Some("A"));
     assert_eq!(m.text_of(space).as_deref(), Some(" "));
 }
+
+/// BailanCraft: PDFium's subsets carry a `cmap` that finds other glyphs than the ones the page
+/// draws; the inline editor showed "150" as Thai letters with it. A program whose `cmap` agrees
+/// with `/ToUnicode` reads as text; one that maps the characters to each other's glyphs doesn't.
+#[test]
+fn a_program_whose_cmap_misreads_the_text_is_told_apart() {
+    use skrifa::MetadataProvider as _;
+    let inter: &[u8] = include_bytes!("../../../../assets/fonts/Inter-Regular.ttf");
+    let face = skrifa::FontRef::new(inter).unwrap();
+    let gid = |c: char| face.charmap().map(c).unwrap();
+    let text = ['1', '5', '0', 'a', 'b', 'c'];
+    let right: Vec<(String, skrifa::GlyphId)> = text.iter().map(|c| (c.to_string(), gid(*c))).collect();
+    // Each character drawn with the next one's glyph.
+    let shuffled: Vec<(String, skrifa::GlyphId)> = text.iter().zip(text.iter().cycle().skip(1)).map(|(c, other)| (c.to_string(), gid(*other))).collect();
+    for (mapping, reads) in [(right, true), (shuffled, false)] {
+        let mut doc = Document::new_empty();
+        let mut fonts = Dict::new();
+        let name = crate::embedding::embed_mapping(&mut doc, &mut fonts, inter, "Inter", &mapping).unwrap();
+        let font = doc.dict(fonts.get(name.as_bytes()).unwrap()).unwrap();
+        assert_eq!(program_reads_as_text(&doc, &font, inter), reads, "{mapping:?}");
+    }
+}

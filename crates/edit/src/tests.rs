@@ -10799,6 +10799,10 @@ fn thai_typed_into_a_font_without_thai_uses_the_bundled_thai_face() {
         assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.replace('\n', " "), draft.replace('\n', " "), "{to}");
         let fonts = page_font_programs(&doc);
         assert!(fonts.iter().any(|(_, program)| program.as_deref() == Some(thai)), "{to}: the Thai face draws the Thai run");
+        // Digits and punctuation the source font has stay in it, with the page's own widths.
+        if let Some(amount) = text::text_lines(&doc, 0).unwrap().into_iter().find(|l| l.text.contains("3.00%")) {
+            assert_eq!(amount.font, "F1", "{to}: {amount:?}");
+        }
     }
 }
 
@@ -10888,6 +10892,66 @@ fn clipped_out_follows_rectangle_clips_through_q_and_cm() {
     assert!(crate::clipped_out(&scaled, 6, [72.0, 684.0, 160.0, 712.0]), "the clip is in user space");
     let curve = ops("q 0 0 m 600 0 l 600 800 l h W n BT ET Q");
     assert!(!crate::clipped_out(&curve, 8, [72.0, 684.0, 160.0, 712.0]), "a clip that isn't a rectangle isn't judged");
+    // BailanCraft: PDFium traces the same clip with `m`/`l`, every corner written twice.
+    let traced = ops("q 1 0 0 1 100 700 cm -5 -4 m -5 -4 l 300 -4 l 300 -4 l 300 10 l 300 10 l -5 10 l h W n BT ET Q");
+    assert!(crate::clipped_out(&traced, 13, [72.0, 696.0, 160.0, 710.0]), "text left of a traced clip");
+    assert!(!crate::clipped_out(&traced, 13, [96.0, 697.0, 390.0, 709.0]), "text inside it");
+    let slanted = ops("q 0 696 m 600 690 l 600 712 l 0 712 l h W n BT ET Q");
+    assert!(!crate::clipped_out(&slanted, 8, [72.0, 684.0, 160.0, 712.0]), "a four-cornered clip that isn't a rectangle isn't judged");
+}
+
+#[test]
+fn a_row_pdfium_clips_run_by_run_keeps_its_label_when_rewritten() {
+    // BailanCraft: PDFium draws each run in its own `q cm <m/l rectangle> W n BT … ET Q`, clipped
+    // from just left of the run. An invoice's "Customer" label and its address joined as one
+    // paragraph; rewritten inside the address's clip, the label and the first digit were cut off.
+    let content = "q 1 0 0 1 62 700 cm -5 -4 m -5 -4 l 60 -4 l 60 -4 l 60 10 l 60 10 l -5 10 l h W n \
+                   BT /F1 12 Tf 1 0 0 1 0 0 Tm (Customer) Tj ET Q \
+                   q 1 0 0 1 120 700 cm -5 -4 m -5 -4 l 300 -4 l 300 -4 l 300 10 l 300 10 l -5 10 l h W n \
+                   BT /F1 12 Tf 1 0 0 1 0 0 Tm (150 Main Road) Tj ET Q";
+    let mut doc = text_page(content);
+    let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    assert_eq!(block.editor_text, "Customer 150 Main Road");
+    text::rewrite_block(&mut doc, 0, 0, Some("Customer 150 Main Road North"), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, "Customer 150 Main Road North");
+    // The label still shows: ink where "Customer" is drawn (x 62–114, baseline 700).
+    let bytes = write_incremental(&doc, &SaveOptions::default()).unwrap();
+    let mut renderer = pdfcraft_render::PageRenderer::new(Arc::new(bytes), pdfcraft_render::RenderConfig::default());
+    let page = renderer.render(pdfcraft_render::RenderRequest { page: 0, kind: pdfcraft_render::RequestKind::Pixels, scale: 1.0, ..Default::default() });
+    let (width, height) = (page.width as usize, page.height as usize);
+    let inked = (64..112)
+        .flat_map(|x| (height - 709..height - 699).map(move |y| (y * width + x) * 4))
+        .filter(|&i| page.rgba.get(i).is_some_and(|v| *v < 128))
+        .count();
+    assert!(inked > 20, "the label was cut off ({inked} dark pixels)");
+}
+
+#[test]
+fn pdfium_runs_join_back_to_back_and_split_at_columns() {
+    // BailanCraft: PDFium writes "(", "00274" and ") Company" as three text objects, each starting
+    // exactly where the last one ended. They are one label; lengthening one of three separate
+    // paragraphs ran it into the next. Helvetica: "(" is 4.0 wide at 12 pt, "00274" 33.36.
+    // Each run sits in its own `q cm <clip> … Q`, as PDFium writes it.
+    let run = |x: f64, shown: &str| format!("q 1 0 0 1 {x} 700 cm -40 -4 m -40 -4 l 300 -4 l 300 -4 l 300 10 l 300 10 l -40 10 l h W n BT /F1 12 Tf 1 0 0 1 0 0 Tm ({shown}) Tj ET Q ");
+    let doc = text_page(&[run(72.0, "\\("), run(75.996, "00274"), run(109.356, "\\) Company")].concat());
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.iter().map(|b| b.editor_text.as_str()).collect::<Vec<_>>(), ["(00274) Company"]);
+    // A run most of an em past the label is the next column ("Customer" and its address): it is
+    // edited on its own and keeps its place. Words of one text object still join across it.
+    let doc = text_page(&[run(62.0, "Customer"), run(124.0, "150 Main Road")].concat());
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.iter().map(|b| b.editor_text.as_str()).collect::<Vec<_>>(), ["Customer", "150 Main Road"]);
+    let mut edited = doc.clone();
+    text::replace_block(&mut edited, 0, 1, "150 Main Road North").unwrap();
+    let lines = text::text_lines(&reopen(&edited), 0).unwrap();
+    let address = lines.iter().find(|l| l.text.starts_with("150")).unwrap();
+    assert!((address.rect[0] - 124.0).abs() < 0.5, "{:?}", address.rect);
+    let doc = text_page("BT /F1 12 Tf 1 0 0 1 62 700 Tm (Customer) Tj 62 0 Td (150 Main Road) Tj ET");
+    assert_eq!(text::text_blocks(&doc, 0).unwrap().len(), 1);
+    // A run that overlaps the one before (a label dragged against it) stays apart.
+    let doc = text_page(&[run(72.0, "\\("), run(74.996, "00274")].concat());
+    assert_eq!(text::text_blocks(&doc, 0).unwrap().len(), 2);
 }
 
 #[test]
@@ -10999,4 +11063,65 @@ fn a_mark_typed_after_a_letter_the_source_subset_has_stays_in_one_font_with_it()
         let doc = reopen(&doc);
         assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.replace('\n', " "), draft.replace('\n', " "), "{to}");
     }
+}
+
+#[test]
+fn digits_by_thai_keep_the_page_s_own_glyphs_when_the_row_is_shaped() {
+    // BailanCraft: an invoice's "150-150/1 หมู่ที่3" was rewritten as one shaped run, so its digits
+    // came from the font program's default glyphs and advances, not the ones the page drew
+    // through the font's encoding. Only the Thai is shaped now; digits stay in the page's font.
+    let Some(thai) = pdfcraft_fonts::thai_draw::static_thai_face() else { return };
+    let mut doc = text_page("BT ET");
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let mut resources = doc.resolve(page.dict.get(b"Resources").unwrap()).as_dict().unwrap().clone();
+    let mut fonts = doc.resolve(resources.get(b"Font").unwrap()).as_dict().unwrap().clone();
+    let name = pdfcraft_fonts::embedding::embed(&mut doc, &mut fonts, thai, "NotoSansThai").unwrap();
+    let metrics = pdfcraft_fonts::pdf::Metrics::from_dict(&doc, &doc.dict(fonts.get(name.as_bytes()).unwrap()).unwrap());
+    let shown: String = metrics.encode("150 กข").unwrap().iter().map(|b| format!("{b:02X}")).collect();
+    resources.set(b"Font".to_vec(), Object::Dict(fonts));
+    doc.update_dict(page.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(resources))).unwrap();
+    let contents = page.dict.get(b"Contents").and_then(Object::as_ref).unwrap();
+    doc.set(contents, Object::Stream(Stream::flate(Dict::new(), format!("BT /{name} 12 Tf 72 700 Td <{shown}> Tj ET").as_bytes())));
+    let mut doc = reopen(&doc);
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, "150 กข");
+    text::rewrite_block(&mut doc, 0, 0, Some("150 กข้ค"), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, "150 กข้ค");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let digits = lines.iter().find(|l| l.text.contains("150")).unwrap();
+    assert_eq!(digits.font, name, "{lines:?}");
+    // The digits are drawn through the page font; only the Thai after them is a shaped run
+    // (marked with its text as `/ActualText`).
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("ActualText <FEFF0E01"), "{content}");
+    assert!(!content.contains("ActualText <FEFF0031"), "the digits were shaped with the Thai: {content}");
+}
+
+#[test]
+fn copying_a_rewritten_thai_row_gives_one_space_between_words() {
+    // BailanCraft: with digits split from the Thai around them, the spaces between Thai words
+    // were split out too, and copying the row gave two spaces between each pair of words.
+    let Some(thai) = pdfcraft_fonts::thai_draw::static_thai_face() else { return };
+    let mut doc = text_page("BT ET");
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let mut resources = doc.resolve(page.dict.get(b"Resources").unwrap()).as_dict().unwrap().clone();
+    let mut fonts = doc.resolve(resources.get(b"Font").unwrap()).as_dict().unwrap().clone();
+    let name = pdfcraft_fonts::embedding::embed(&mut doc, &mut fonts, thai, "NotoSansThai").unwrap();
+    let metrics = pdfcraft_fonts::pdf::Metrics::from_dict(&doc, &doc.dict(fonts.get(name.as_bytes()).unwrap()).unwrap());
+    let shown: String = metrics.encode("ตำบล อำเภอ").unwrap().iter().map(|b| format!("{b:02X}")).collect();
+    resources.set(b"Font".to_vec(), Object::Dict(fonts));
+    doc.update_dict(page.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(resources))).unwrap();
+    let contents = page.dict.get(b"Contents").and_then(Object::as_ref).unwrap();
+    doc.set(contents, Object::Stream(Stream::flate(Dict::new(), format!("BT /{name} 12 Tf 72 700 Td <{shown}> Tj ET").as_bytes())));
+    let mut doc = reopen(&doc);
+    text::rewrite_block(&mut doc, 0, 0, Some("ตำบล อำเภอ 12 จังหวัด"), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    // The words and the spaces between them are one shaped run each side of the digits.
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    let spans = content.matches("/ActualText").count();
+    assert_eq!(spans, 2, "{content}");
+    let bytes = write_incremental(&doc, &SaveOptions::default()).unwrap();
+    let mut renderer = pdfcraft_render::PageRenderer::new(Arc::new(bytes), pdfcraft_render::RenderConfig::default());
+    let text = renderer.filtered_text(0, pdfcraft_render::text::TextFilter::default()).unwrap().plain_text();
+    assert!(!text.contains("  "), "{text:?}");
 }

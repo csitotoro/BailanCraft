@@ -234,6 +234,20 @@ fn starts_list_item(row: &[usize], lines: &[TextLine]) -> bool {
     row.iter().filter_map(|i| lines.get(*i)).map(|l| l.text.trim_start()).find(|t| !t.is_empty()).is_some_and(opens_with_marker)
 }
 
+/// BailanCraft: `line` starts where `prev` ends, on the same baseline, to a hundredth of the size.
+/// A paragraph dragged against another lands near it, not on its pen position; a producer that
+/// writes each run of a row as its own text object (PDFium) puts the next run exactly there.
+fn continues_exactly(prev: &TextLine, line: &TextLine, gap: f64) -> bool {
+    let tolerance = prev.size.min(line.size) * 0.01;
+    let (a, b) = (&prev.origin.state, &line.origin.state);
+    gap.abs() <= tolerance
+        && (prev.frame_origin().1 - line.frame_origin().1).abs() <= tolerance
+        // Spacing that can be seen keeps runs apart, as it does when they touch.
+        && (a.char_spacing - b.char_spacing).abs() < 1e-3
+        && (a.word_spacing - b.word_spacing).abs() < 1e-3
+        && (a.scale - b.scale).abs() < 1e-6
+}
+
 fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
     let mut rows: Vec<Vec<usize>> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
@@ -259,11 +273,19 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                         && (prev.frame_origin().1 - line.frame_origin().1).abs() < prev.size.max(line.size) * 0.5))
                 && gap >= -prev.size.min(line.size) * 0.2
                 && gap < prev.size.max(line.size) * 1.5
+                // BailanCraft: a separate text object most of an em away is the next column of a
+                // form or table ("Customer" and its address, a total and the next cell's label).
+                // Joined, a rewrite closed the gap to one space and pulled the value left. Words
+                // in one text object (justified text) keep the wider allowance.
+                && (prev.origin.bt_op == line.origin.bt_op || gap < prev.size.max(line.size) * 0.75)
                 // Separate same-style text objects that merely touch or overlap, with no space
                 // between them, are separate labels (for example a paragraph dragged against
                 // another, #594). Style runs and words separated by a space or gap still join.
                 && (prev.origin.bt_op == line.origin.bt_op
                     || gap > prev.size.min(line.size) * 0.01
+                    // BailanCraft: PDFium writes every run of a row as its own text object,
+                    // each starting exactly where the one before ends; those are one label.
+                    || continues_exactly(prev, line, gap)
                     || !same_style(prev, line)
                     || prev.text.ends_with(char::is_whitespace)
                     || line.text.starts_with(char::is_whitespace))

@@ -195,7 +195,12 @@ impl CharacterPreparation<'_> {
             } else {
                 None
             };
+            // In a span of Thai, only the Thai (and the marks on it) needs the complete face:
+            // digits, Latin and punctuation the source font has stay in it, with the widths the
+            // page was written with. Drawn from an installed face, "150-150/1" looked unlike the
+            // rest of an invoice made with an older Cordia New.
             let thai_font = thai_font.or(span_font);
+            let thai_only = thai_font.is_some() && pdfcraft_fonts::thai_draw::has_thai(draft.get(range.clone()).unwrap_or_default());
             for (offset, ch) in draft.get(range).unwrap_or_default().char_indices() {
                 if ch == '\n' {
                     chars.push((ch, index, source.font.clone()));
@@ -208,7 +213,13 @@ impl CharacterPreparation<'_> {
                 }
                 let text = ch.to_string();
                 let requested = overrides.get(&index).and_then(|range| range.resource.as_deref()).or(style.resource.as_deref());
-                let name = if let Some(name) = thai_font.clone() {
+                let own = thai_only
+                    && !pdfcraft_fonts::thai_draw::is_thai(ch)
+                    && !is_combining_mark(ch)
+                    && resolver.metrics.get(&source.font).is_some_and(|metrics| source_encodes(metrics, &text));
+                let name = if own {
+                    source.font.clone()
+                } else if let Some(name) = thai_font.clone() {
                     name
                 } else if let Some(name) = resolver.encodable_font(source, &text, requested)? {
                     name
@@ -325,7 +336,7 @@ fn prepare_shaped_rows(
         let mut at = 0;
         while let Some(item) = row.get(at) {
             let mut end = at + 1;
-            while row.get(end).is_some_and(|next| next.1 == item.1 && next.2 == item.2) {
+            while row.get(end).is_some_and(|next| one_segment(row.get(at..end).unwrap_or_default(), next)) {
                 end += 1;
             }
             let segment = row.get(at..end).unwrap_or_default();
@@ -348,6 +359,21 @@ fn embed_shaped_resources(doc: &mut Document, fonts: &mut Dict, runs: &ShapedRun
         resources.insert(*key, resource);
     }
     Ok(resources)
+}
+
+/// Whether `next` continues the run of characters that `first` opens: the same source run and
+/// font, and (BailanCraft) the same side of a Thai/non-Thai boundary. Only Thai needs shaping;
+/// shaped with it, the digits of "150-150/1 หมู่ที่3" took the program's own glyphs and advances
+/// instead of the ones the page drew through the font's encoding. A mark always stays with its run,
+/// and so does a space: split out between two Thai words, copying the row gave two spaces there.
+fn one_segment(segment: &[StyledChar], next: &StyledChar) -> bool {
+    let Some(first) = segment.first() else { return true };
+    let thai = |c: &StyledChar| pdfcraft_fonts::thai_draw::is_thai(c.0);
+    next.1 == first.1
+        && next.2 == first.2
+        && (is_combining_mark(next.0)
+            || next.0.is_whitespace()
+            || segment.iter().find(|c| !c.0.is_whitespace()).is_none_or(|c| thai(c) == thai(next)))
 }
 
 /// BailanCraft: Thai marks and Latin combining marks, which are shaped onto the letter before them.
@@ -1043,7 +1069,7 @@ pub(crate) fn rewrite_styled_block(
         let mut at = 0;
         while let Some(item) = items.get(at) {
             let mut end = at + 1;
-            while items.get(end).is_some_and(|v| v.1 == item.1 && v.2 == item.2) {
+            while items.get(end).is_some_and(|v| one_segment(items.get(at..end).unwrap_or_default(), v)) {
                 end += 1;
             }
             let segment = items.get(at..end).unwrap_or_default();
@@ -1190,7 +1216,7 @@ pub(crate) fn rewrite_styled_block(
             let Some(item) = row.get(pos) else { break };
             let source = lines.get(item.1).unwrap_or(first);
             let mut end = pos + 1;
-            while row.get(end).is_some_and(|other| other.1 == item.1 && other.2 == item.2) {
+            while row.get(end).is_some_and(|other| one_segment(row.get(pos..end).unwrap_or_default(), other)) {
                 end += 1;
             }
             let segment = row.get(pos..end).unwrap_or_default();

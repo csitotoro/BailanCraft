@@ -199,6 +199,54 @@ fn restore_blank_glyphs(doc: &Document, font: &Dict, m: &mut Metrics) {
     }
 }
 
+/// BailanCraft: whether `bytes`, the program embedded in the Type 0 `font`, finds through its own
+/// `cmap` the glyphs the page draws for the characters `/ToUnicode` gives. PDFium writes subsets
+/// whose `cmap` doesn't: shown with it, the inline editor turned "150" into Thai letters and the
+/// Thai into Latin ones. True for other fonts and when nothing can be compared.
+pub fn program_reads_as_text(doc: &Document, font: &Dict, bytes: &[u8]) -> bool {
+    use skrifa::MetadataProvider as _;
+    if font.name(b"Subtype") != Some(b"Type0") {
+        return true;
+    }
+    let Some(descendant) = dict(doc, font.get(b"DescendantFonts").and_then(|o| doc.resolve(o).as_array().and_then(|a| a.first()).cloned()).as_ref())
+    else {
+        return true;
+    };
+    let Ok(face) = skrifa::FontRef::from_index(bytes, 0) else { return true };
+    let gid_map = match descendant.get(b"CIDToGIDMap").map(|o| doc.resolve(o)).as_deref() {
+        None | Some(Object::Name(_)) => None,
+        Some(Object::Stream(map)) => match map.decoded_within(1 << 17) {
+            Ok(map) => Some(map),
+            Err(_) => return true,
+        },
+        Some(_) => return true,
+    };
+    let gid_of = |cid: u32| match &gid_map {
+        None => Some(cid),
+        Some(map) => {
+            let at = usize::try_from(cid).ok()?.checked_mul(2)?;
+            map.get(at..at.checked_add(2)?).map(|b| u32::from(u16::from_be_bytes([b[0], b[1]])))
+        }
+    };
+    let m = Metrics::from_dict(doc, font);
+    let charmap = face.charmap();
+    let (mut agree, mut disagree) = (0_usize, 0_usize);
+    for (code, (_, text)) in m.unicode.explicit.iter().take(4096) {
+        let mut chars = text.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else { continue };
+        if c.is_whitespace() || c.is_control() {
+            continue;
+        }
+        let Some(gid) = gid_of(m.cid(*code)) else { continue };
+        if charmap.map(c).is_some_and(|g| g.to_u32() == gid) {
+            agree += 1;
+        } else {
+            disagree += 1;
+        }
+    }
+    disagree <= agree
+}
+
 /// The CIDs (below 65 536) of a Type 0 font over an embedded TrueType program whose glyph has
 /// outline data, through `/CIDToGIDMap`; empty when the program or the map can't be read.
 /// Subsetters keep glyph ids and empty the glyphs they drop, so an empty glyph is a missing one.

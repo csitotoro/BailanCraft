@@ -586,7 +586,9 @@ pub(crate) fn text_op(x: f64, y: f64, text: &str) -> Vec<u8> {
 /// BailanCraft: whether a rectangle clip in force before operator `at` cuts off part of `reach`
 /// (user space). Word draws every line in `q … re W n … Q` of that line's height, so a paragraph
 /// rewritten there showed only the row that stayed inside it; such a rewrite is drawn on top of
-/// the page instead. A clip that isn't one rectangle (or can't be followed) is not judged.
+/// the page instead. PDFium writes the same clip as a closed path of `m`/`l` corners around each
+/// text object, which counts as a rectangle too. A clip that isn't one rectangle (or can't be
+/// followed) is not judged.
 pub(crate) fn clipped_out(ops: &[pdfcraft_content::Op], at: usize, reach: [f64; 4]) -> bool {
     use pdfcraft_content::Matrix;
     type Rect = [f64; 4];
@@ -601,6 +603,19 @@ pub(crate) fn clipped_out(ops: &[pdfcraft_content::Op], at: usize, reach: [f64; 
     let mut path: Option<Rect> = None;
     let mut rectangles = true;
     let mut clipping = false;
+    // The open `m`/`l` subpath's corners in user space.
+    let mut corners: Vec<(f64, f64)> = Vec::new();
+    // A finished `m`/`l` subpath joins `path` when it is an axis-aligned rectangle.
+    let close = |corners: &mut Vec<(f64, f64)>, path: &mut Option<Rect>, rectangles: &mut bool| {
+        if corners.is_empty() {
+            return;
+        }
+        match polygon_rectangle(corners) {
+            Some(r) => *path = Some(union(*path, r)),
+            None => *rectangles = false,
+        }
+        corners.clear();
+    };
     for op in ops.iter().take(at) {
         let number = |i: usize| op.operands.get(i).and_then(Object::as_f64);
         match op.op.as_slice() {
@@ -616,6 +631,7 @@ pub(crate) fn clipped_out(ops: &[pdfcraft_content::Op], at: usize, reach: [f64; 
                 }
             }
             b"re" => {
+                close(&mut corners, &mut path, &mut rectangles);
                 if let (Some(x), Some(y), Some(w), Some(h)) = (number(0), number(1), number(2), number(3)) {
                     let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)].map(|(x, y)| ctm.apply(x, y));
                     let bounds = corners.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |r, p| {
@@ -624,9 +640,24 @@ pub(crate) fn clipped_out(ops: &[pdfcraft_content::Op], at: usize, reach: [f64; 
                     path = Some(union(path, bounds));
                 }
             }
-            b"m" | b"l" | b"c" | b"v" | b"y" | b"h" => rectangles = false,
+            b"m" | b"l" => match (number(0), number(1)) {
+                (Some(x), Some(y)) if corners.len() < 64 => {
+                    if op.op.as_slice() == b"m" {
+                        close(&mut corners, &mut path, &mut rectangles);
+                    } else if corners.is_empty() {
+                        // A line with no `m` before it (after `h`, say) continues a shape
+                        // this doesn't follow.
+                        rectangles = false;
+                    }
+                    corners.push(ctm.apply(x, y));
+                }
+                _ => rectangles = false,
+            },
+            b"h" => close(&mut corners, &mut path, &mut rectangles),
+            b"c" | b"v" | b"y" => rectangles = false,
             b"W" | b"W*" => clipping = true,
             b"n" | b"f" | b"F" | b"f*" | b"S" | b"s" | b"B" | b"B*" | b"b" | b"b*" => {
+                close(&mut corners, &mut path, &mut rectangles);
                 if clipping {
                     match path.filter(|_| rectangles) {
                         Some(p) => {
@@ -644,4 +675,41 @@ pub(crate) fn clipped_out(ops: &[pdfcraft_content::Op], at: usize, reach: [f64; 
     }
     const SLACK: f64 = 0.5;
     clip.is_some_and(|c| reach[0] < c[0] - SLACK || reach[1] < c[1] - SLACK || reach[2] > c[2] + SLACK || reach[3] > c[3] + SLACK)
+}
+
+/// BailanCraft: the bounds of a closed `m`/`l` subpath that traces an axis-aligned rectangle
+/// (repeated points allowed, as PDFium writes every corner twice), in the space its corners are
+/// given in. `None` for any other shape.
+fn polygon_rectangle(corners: &[(f64, f64)]) -> Option<[f64; 4]> {
+    const EPS: f64 = 1e-3;
+    let same = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < EPS && (a.1 - b.1).abs() < EPS;
+    let mut points: Vec<(f64, f64)> = Vec::with_capacity(corners.len());
+    for &p in corners {
+        if !(p.0.is_finite() && p.1.is_finite()) {
+            return None;
+        }
+        if points.last().is_none_or(|&last| !same(last, p)) {
+            points.push(p);
+        }
+    }
+    if let (Some(&first), Some(&last)) = (points.first(), points.last())
+        && points.len() > 1
+        && same(first, last)
+    {
+        points.pop();
+    }
+    if points.len() != 4 {
+        return None;
+    }
+    let bounds = points.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |r, p| {
+        [r[0].min(p.0), r[1].min(p.1), r[2].max(p.0), r[3].max(p.1)]
+    });
+    let on_corner = |p: &(f64, f64)| {
+        ((p.0 - bounds[0]).abs() < EPS || (p.0 - bounds[2]).abs() < EPS) && ((p.1 - bounds[1]).abs() < EPS || (p.1 - bounds[3]).abs() < EPS)
+    };
+    let edges_straight = (0..points.len()).all(|i| {
+        let (Some(a), Some(b)) = (points.get(i), points.get((i + 1) % points.len())) else { return false };
+        (a.0 - b.0).abs() < EPS || (a.1 - b.1).abs() < EPS
+    });
+    (points.iter().all(on_corner) && edges_straight).then_some(bounds)
 }

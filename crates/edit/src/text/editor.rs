@@ -24,15 +24,22 @@ pub fn text_editor_fonts(doc: &Document, page: usize) -> Result<Vec<TextEditorFo
     for (name, font) in fonts.iter().take(128) {
         let Some(font) = doc.dict(font) else { continue };
         let Some(bytes) = pdfcraft_fonts::pdf::embedded_sfnt_within(doc, &font, &mut decode) else { continue };
+        let face = Metrics::from_dict(doc, &font).base_font.rsplit('+').next().unwrap_or_default().to_owned();
+        // BailanCraft: a program whose own `cmap` misreads the text (PDFium's subsets) would
+        // show other letters in the editor; the same face installed here shows the right ones.
+        let bytes = if pdfcraft_fonts::pdf::program_reads_as_text(doc, &font, &bytes) {
+            bytes
+        } else {
+            match pdfcraft_fonts::system_faces::matching(&face).into_iter().find_map(pdfcraft_fonts::system_faces::program) {
+                Some(installed) => installed.to_vec(),
+                None => continue,
+            }
+        };
         if bytes.len() > budget {
             continue;
         }
         budget -= bytes.len();
-        result.push(TextEditorFont {
-            resource: String::from_utf8_lossy(name).into_owned(),
-            face: Metrics::from_dict(doc, &font).base_font.rsplit('+').next().unwrap_or_default().to_owned(),
-            bytes,
-        });
+        result.push(TextEditorFont { resource: String::from_utf8_lossy(name).into_owned(), face, bytes });
     }
     // The approved full face follows all source subsets in the editor's font stack. It can
     // display newly inserted glyphs before Apply without changing the source text's face.
