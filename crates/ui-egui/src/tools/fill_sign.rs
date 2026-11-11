@@ -97,7 +97,10 @@ pub struct SigDraft {
 
 impl SigDraft {
     pub fn new(initials: bool, name: &str) -> Self {
-        let text = if initials { name.split_whitespace().filter_map(|w| w.chars().next()).collect() } else { name.trim().to_string() };
+        // BailanCraft: a Thai word's initial is its first consonant, not a vowel written before it
+        // (เ แ โ ใ ไ): "เกียรติ" gives ก.
+        let initial = |w: &str| w.chars().find(|c| !matches!(c, '\u{0E40}'..='\u{0E44}'));
+        let text = if initials { name.split_whitespace().filter_map(initial).collect() } else { name.trim().to_string() };
         Self { text, initials, ..Default::default() }
     }
 
@@ -1042,6 +1045,20 @@ impl crate::PdfCraftApp {
 
 #[cfg(test)]
 mod tests {
+    /// BailanCraft: a Thai name typed as a signature drew nothing, so it could not be placed.
+    #[test]
+    fn a_thai_signature_has_a_preview_and_is_placed() {
+        if pdfcraft_fonts::thai_draw::static_thai_face().is_none() {
+            return;
+        }
+        let image = super::script_preview("สมชาย ใจดี", 480, 104);
+        assert!(image.pixels.iter().any(|p| p.a() > 0), "the preview shows the name");
+        let edit = super::typed_signature_at(0, [72.0, 700.0], "สมชาย ใจดี", 24.0, 0, "");
+        assert!(edit.is_some(), "the signature is placed");
+        assert_eq!(super::SigDraft::new(true, "เกียรติ ใจดี").text, "กจ");
+        assert_eq!(super::SigDraft::new(true, "Ada Lovelace").text, "AL");
+    }
+
     #[test]
     fn undo_removes_the_last_stroke_and_skips_empty_ones() {
         let mut d = super::SigDraft { drawing: true, ..Default::default() };

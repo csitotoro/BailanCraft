@@ -61,6 +61,8 @@ struct Flatten {
     /// Horizontal shear applied to every point (x += slant × y), for slanted fallback glyphs.
     slant: f64,
     dx: f64,
+    /// BailanCraft: vertical offset of every point, for a shaped mark raised or lowered.
+    dy: f64,
     points: usize,
     too_complex: bool,
     max_points: usize,
@@ -68,16 +70,16 @@ struct Flatten {
 
 impl Flatten {
     fn new(scale: f64) -> Self {
-        Self { contours: Vec::new(), cur: Vec::new(), scale, slant: 0.0, dx: 0.0, points: 0, too_complex: false, max_points: 4096 }
+        Self { contours: Vec::new(), cur: Vec::new(), scale, slant: 0.0, dx: 0.0, dy: 0.0, points: 0, too_complex: false, max_points: 4096 }
     }
 
     fn pt(&self, x: f32, y: f32) -> [f64; 2] {
-        let (x, y) = (x as f64 * self.scale, y as f64 * self.scale);
+        let (x, y) = (x as f64 * self.scale, y as f64 * self.scale + self.dy);
         [self.dx + x + self.slant * y, y]
     }
 
     fn last(&self) -> [f64; 2] {
-        self.cur.last().copied().unwrap_or([self.dx, 0.0])
+        self.cur.last().copied().unwrap_or([self.dx, self.dy])
     }
 
     fn push(&mut self, p: [f64; 2]) {
@@ -211,7 +213,15 @@ pub fn script_missing(text: &str) -> Option<char> {
     let charmap = font.charmap();
     let fallback = FontRef::new(INTER_REGULAR).ok();
     let fallback_map = fallback.as_ref().map(|f| f.charmap());
-    text.chars().find(|c| !c.is_whitespace() && charmap.map(*c).is_none() && fallback_map.as_ref().and_then(|m| m.map(*c)).is_none())
+    // BailanCraft: Thai is drawn from the bundled Thai face.
+    let thai = crate::thai_draw::static_thai_face().and_then(|bytes| FontRef::new(bytes).ok());
+    let thai_map = thai.as_ref().map(|f| f.charmap());
+    text.chars().find(|c| {
+        !c.is_whitespace()
+            && charmap.map(*c).is_none()
+            && fallback_map.as_ref().and_then(|m| m.map(*c)).is_none()
+            && !(crate::thai_draw::is_thai(*c) && thai_map.as_ref().and_then(|m| m.map(*c)).is_some())
+    })
 }
 
 /// The outlines of `text` in the script font. Characters it lacks (Cyrillic, Greek, …) are drawn
@@ -244,8 +254,41 @@ pub fn script_outline(text: &str) -> ScriptOutline {
     // The 4096-point budget is for one untrusted document glyph (japanese_glyph), not a
     // whole signature in our bundled font. Keep a separate bounded budget for the line.
     pen.max_points = 262_144;
-    for ch in text.chars() {
-        if let Some(gid) = charmap.map(ch) {
+    // BailanCraft: Thai comes from the bundled Thai face, a run at a time so its vowels and tone
+    // marks are shaped onto their letters, slanted like the script and scaled like Inter.
+    let thai = crate::thai_draw::static_thai_face().and_then(|bytes| {
+        let f = FontRef::new(bytes).ok()?;
+        let m = f.metrics(Size::unscaled(), loc);
+        let em = 1.0 / m.units_per_em.max(1) as f64;
+        let ratio = match (metrics.cap_height, m.cap_height) {
+            (Some(ours), Some(theirs)) if ours > 0.0 && theirs > 0.0 => (ours as f64 * scale) / (theirs as f64 * em),
+            _ => 1.0,
+        };
+        let ratio = if ratio.is_finite() { ratio.clamp(0.5, 2.0) } else { 1.0 };
+        Some((bytes, f.outline_glyphs(), em, ratio))
+    });
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, ch)) = chars.next() {
+        if crate::thai_draw::is_thai(ch)
+            && let Some((bytes, outlines, em, ratio)) = &thai
+        {
+            let mut end = at + ch.len_utf8();
+            while let Some((next, c)) = chars.peek().copied().filter(|(_, c)| crate::thai_draw::is_thai(*c)) {
+                end = next + c.len_utf8();
+                chars.next();
+            }
+            let Ok(run) = crate::source_shaping::shape(bytes, text.get(at..end).unwrap_or_default()) else { continue };
+            (pen.scale, pen.slant) = (em * ratio, FALLBACK_SLANT);
+            let start = pen.dx;
+            for glyph in &run.glyphs {
+                (pen.dx, pen.dy) = (start + glyph.position[0] * ratio, glyph.position[1] * ratio);
+                if let Some(g) = outlines.get(glyph.id) {
+                    let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), loc), &mut pen);
+                    pen.close();
+                }
+            }
+            (pen.dx, pen.dy) = (start + run.advance * ratio, 0.0);
+        } else if let Some(gid) = charmap.map(ch) {
             (pen.scale, pen.slant) = (scale, 0.0);
             if let Some(g) = glyphs.get(gid) {
                 let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), loc), &mut pen);
@@ -306,6 +349,36 @@ mod tests {
         let mixed = super::script_outline("Ana Ана");
         let latin_only = super::script_outline("Ana ");
         assert!(mixed.width > latin_only.width + 0.5, "{} vs {}", mixed.width, latin_only.width);
+    }
+
+    /// BailanCraft: a Thai name typed as a signature drew nothing (the script font and Inter have
+    /// no Thai), so Fill & Sign had no signature to place. It comes from the bundled Thai face,
+    /// shaped: the tone mark of "ปุ่น" sits above its letter, the vowel below it.
+    #[test]
+    fn thai_names_are_drawn_from_the_thai_face() {
+        if crate::thai_draw::static_thai_face().is_none() {
+            return;
+        }
+        assert_eq!(super::script_missing("สมชาย ใจดี"), None);
+        let o = super::script_outline("สมชาย ใจดี");
+        assert!(o.contours.len() >= 9, "{} contours", o.contours.len());
+        assert!(o.width > 1.0, "{}", o.width);
+        let [_, bottom, right, top] = o.bounds();
+        assert!(right <= o.width + 0.5 && top < 2.0 && bottom > -1.0, "{:?}", o.bounds());
+        // Each letter is drawn: a longer name is wider, and a mixed name keeps the Latin.
+        assert!(super::script_outline("สมชาย ใจดีมาก").width > o.width + 0.3);
+        assert!(super::script_outline("Ana สมชาย").width > super::script_outline("Ana ").width + 0.5);
+        // Shaped: the mark over ป is higher than ป itself, the vowel under it lower.
+        let ink = |o: &super::ScriptOutline| {
+            let ys = || o.contours.iter().flatten().map(|p| p[1]);
+            (ys().fold(f64::INFINITY, f64::min), ys().fold(f64::NEG_INFINITY, f64::max))
+        };
+        let base = super::script_outline("ป");
+        let shaped = super::script_outline("ปุ่");
+        let ((base_low, base_high), (low, high)) = (ink(&base), ink(&shaped));
+        assert!(high > base_high + 0.05, "tone mark above: {high} vs {base_high}");
+        assert!(low < base_low - 0.05, "vowel below: {low} vs {base_low}");
+        assert!((shaped.width - base.width).abs() < 0.05, "marks take no room of their own: {} vs {}", shaped.width, base.width);
     }
 
     #[test]
