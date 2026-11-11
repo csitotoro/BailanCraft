@@ -84,6 +84,9 @@ sys-locale = "0.3"
 # Region ▸ Measurement system for the default Units, read from the registry without starting reg.exe;
 # where the pointer is while files are dragged over the window (winit doesn't say).
 winsafe = { version = "0.0.29", default-features = false, features = ["advapi", "user"] }
+# BailanCraft: whether this copy is code-signed, so an unsigned one updates by running the
+# release's installer (craft-update already depends on it).
+verifysign = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rfd = { workspace = true, features = ["file-handle-inner"] }

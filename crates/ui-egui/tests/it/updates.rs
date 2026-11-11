@@ -232,3 +232,52 @@ fn bailancraft_never_asks_the_upstream_release_feed() {
     assert!(!h.state_mut().execute("help.check_updates"), "refused without a repository");
     assert!(!h.state_mut().execute("help.feedback"));
 }
+
+/// BailanCraft: a copy that isn't code-signed (as `cargo test` binaries aren't, like a release
+/// built without a certificate) can't install through craft-update, which said only "this copy
+/// of BailanCraft isn't signed … so it doesn't install updates". Its own prompt offers Update when
+/// the release has an MSI with a published checksum (downloaded, checked, started), and Download
+/// otherwise; an up-to-date check still says so.
+#[test]
+fn an_unsigned_copy_offers_the_release_installer() {
+    let with_msi = |hash: Option<&str>| -> UpdateSource {
+        let mut r = release("v99.0.0");
+        r.assets = vec![craft_update::Asset {
+            name: "bailancraft-99.0.0-windows-x64.msi".into(),
+            size: 10,
+            url: "https://github.com/csitotoro/BailanCraft/releases/download/v99.0.0/bailancraft-99.0.0-windows-x64.msi".into(),
+            sha256: hash.map(str::to_owned),
+        }];
+        Arc::new(move || Ok(Some(r.clone())))
+    };
+    let open = |source: UpdateSource| {
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.set_update_source(source.clone());
+            app
+        });
+        h.state_mut().check_for_updates();
+        settle(&mut h);
+        h
+    };
+    if !pdfcraft_engine::brand::UPDATE_CHECK {
+        return;
+    }
+    let mut h = open(with_msi(Some("d9bbea085c17430428cc6ee6b6cbcdf67aee5e3bd9b6ebd02f4f39055057fa25")));
+    h.get_by_label_contains("99.0.0 is available");
+    h.get_by_label("UPDATE AND RESTART");
+    assert!(h.query_by_label_contains("isn't signed").is_none(), "no dead end for an unsigned copy");
+    h.get_by_label("LATER").click();
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("is available").is_none(), "Later closes the prompt");
+
+    let h = open(with_msi(None));
+    h.get_by_label_contains("99.0.0 is available");
+    h.get_by_label("DOWNLOAD");
+    assert!(h.query_by_label("UPDATE AND RESTART").is_none());
+
+    let h = open(source(Ok(None)));
+    assert!(h.query_by_label_contains("is available").is_none());
+    h.get_by_label_contains("is the newest version available");
+}

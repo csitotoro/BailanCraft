@@ -73,9 +73,11 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
 - Form field values and text box / Fill & Sign text draw Thai through `pdfcraft_fonts::thai_draw`
   (shaped clusters in Type 3 fonts `BCTh0…`; builders record lines under `PCThaiLines`, and
   whoever stores the stream calls `thai_draw::materialize`). Headers/footers (`BCThHF…`),
-  text watermarks (`BCThWM…`) and stamp labels/by-lines use it too. Still WinAnsi-only: typed
-  signatures (no Thai script face), line captions, measurement labels, redaction overlay text,
-  push-button captions, `doc_create` from text. Thai office stamps are `StampGroup::Thai`
+  text watermarks (`BCThWM…`) and stamp labels/by-lines use it too. Typed signatures draw Thai
+  from the bundled Thai face, shaped a run at a time and slanted like the Inter fallback
+  (`fonts::script::script_outline`); there is no Thai handwriting face yet. Still WinAnsi-only:
+  line captions, measurement labels, redaction overlay text, push-button captions,
+  `doc_create` from text. Thai office stamps are `StampGroup::Thai`
   (`ThApproved…`, `/Name` `BCTh…`), listed first in the stamp palette; they are not dynamic.
 - Installed fonts (`pdfcraft_fonts::system_faces`, incl. `.ttc` faces, OS/2 `fsType` decides,
   no open-licence requirement): Edit text completes a PDF's subset with the same installed face;
@@ -88,6 +90,14 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
 - Word PDFs: `/ToUnicode` maps the NIKHAHIT of ำ to a space (`restore_blank_glyphs`), lines sit in
   one-line clips (`place::clipped_out` draws the rewrite on top), shifted marks use U+F700–F71A
   (`fonts::thai_text`).
+- PDFium PDFs (Chrome/ERP invoices): every run is its own `q cm <m/l rectangle> W n BT … ET Q`
+  (`clipped_out` reads those traced rectangles too); runs written back to back on one baseline
+  join as one label (`grouping::continues_exactly`); a separate run most of an em away is the
+  next column, not the same paragraph. Their subsets' `cmap` misreads the text, so the inline
+  editor shows the installed face instead (`fonts::pdf::program_reads_as_text`). Shaped Thai is
+  split from digits/Latin of the same font (`styled::one_segment`) so those keep the page's
+  glyphs. Whitespace-only runs between objects are left in place on a rewrite, so copying an
+  edited row can give two spaces where a shaped run starts with one.
 - Some UI strings have no Thai translation yet (e.g. the update dialog).
 
 ## Known test notes (this machine)
@@ -98,5 +108,13 @@ upstream tracker, `plan/` files, parity bookkeeping, CI policy) do not.
 - `pdfcraft-ui-egui --test it` sometimes dies with STATUS_ACCESS_VIOLATION mid-run (native code,
   near fill_sign twice, editing once); reruns passed. Rerun before
   suspecting a change.
-- Six upstream update-flow tests are `#[ignore]`d because `brand::UPDATE_CHECK` is off;
-  `bailancraft_never_asks_the_upstream_release_feed` covers the fork's behaviour.
+- Six upstream update-flow tests are still `#[ignore]`d (written for the PdfCraft feed and
+  wording); `an_unsigned_copy_offers_the_release_installer` covers the fork's flow.
+
+## Updates (unsigned builds)
+- craft-update self-installs only when this exe and the new one carry the same Authenticode
+  publisher. Until releases are signed, `ui-egui/src/platform/manual_update.rs` takes over for an
+  unsigned copy: same prompt, Update downloads the release's `-windows-x64.msi` (checked against
+  the SHA-256 GitHub publishes as the asset `digest`), runs `msiexec /i` and closes the app;
+  portable copies get Download (the zip in the browser). Try it with
+  `BAILANCRAFT_PRETEND_VERSION=0.18.1`. A signed copy keeps craft-update's own flow.

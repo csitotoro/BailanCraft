@@ -27,6 +27,9 @@ pub(crate) struct Updates {
     startup_check: bool,
     #[cfg(not(target_arch = "wasm32"))]
     check_requested: bool,
+    /// BailanCraft: the flow of a copy that isn't code-signed (see `manual_update`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) manual: super::manual_update::ManualUpdate,
 }
 
 impl Default for Updates {
@@ -39,6 +42,8 @@ impl Default for Updates {
             startup_check: false,
             #[cfg(not(target_arch = "wasm32"))]
             check_requested: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            manual: Default::default(),
         }
     }
 }
@@ -53,6 +58,8 @@ impl PdfCraftApp {
     /// Replaces the network with `source` (tests).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_update_source(&mut self, source: UpdateSource) {
+        // BailanCraft: the unsigned copy's flow asks the same stand-in.
+        self.updates.manual.source = Some(source.clone());
         self.updates.updater = Updater::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION")).with_source(source);
     }
 
@@ -81,6 +88,16 @@ impl PdfCraftApp {
             // Settled on the first frame: a preference turned on later waits for the next start.
             let at_start = std::mem::take(&mut self.updates.startup_check) && self.update_check_at_start && pdfcraft_engine::brand::UPDATE_CHECK;
             let updates = &mut self.updates;
+            // BailanCraft: an unsigned copy can't install through craft-update; its own flow runs.
+            if super::manual_update::unsigned_copy() {
+                if std::mem::take(&mut updates.check_requested) && pdfcraft_engine::brand::UPDATE_CHECK {
+                    updates.manual.check_now(&ctx);
+                } else if at_start {
+                    updates.manual.check_at_start(&ctx);
+                }
+                updates.manual.tick(&ctx);
+                return;
+            }
             if std::mem::take(&mut updates.check_requested) && pdfcraft_engine::brand::UPDATE_CHECK {
                 updates.updater.check_now(&ctx);
             } else if at_start {
@@ -97,6 +114,32 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     {
         // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
         let clean = app.first_dirty().is_none();
+        // BailanCraft: an unsigned copy's own prompt, and the outcome of its requested check.
+        if super::manual_update::unsigned_copy() {
+            match app.updates.manual.show(ctx, clean) {
+                super::manual_update::ManualAction::None => {}
+                super::manual_update::ManualAction::OpenUrl(url) => app.open_url(&url),
+                super::manual_update::ManualAction::Close => {
+                    app.request_quit(ctx);
+                }
+            }
+            if app.updates.open && !app.updates.check_requested && app.updates.manual.status.is_none() {
+                app.updates.open = false;
+            }
+            if app.updates.open {
+                let status = app.updates.manual.status.clone().unwrap_or(Status::Checking);
+                let dialog = CheckResultDialog::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION"));
+                match dialog.show(ctx, &status) {
+                    CheckResultResponse::None => {}
+                    CheckResultResponse::Close => {
+                        app.updates.open = false;
+                        app.updates.manual.status = None;
+                    }
+                    CheckResultResponse::CheckAgain => app.updates.check_requested = true,
+                }
+            }
+            return;
+        }
         match app.updates.updater.show_if(ctx, clean) {
             Action::None => {}
             Action::OpenUrl(url) => app.open_url(&url),
