@@ -95,6 +95,47 @@ pub(crate) fn body(
     let settings = d.settings(sizes.len(), labels);
     let sheets = settings.as_ref().ok().and_then(|s| print::layout(sizes, s).ok()).unwrap_or_default();
     d.sheet = d.sheet.min(sheets.len().saturating_sub(1));
+    // BailanCraft: on a short window (1080p at 150 % scale leaves about 690 points) the settings
+    // and preview ran past the bottom of the screen and took Print and Cancel with them. They
+    // scroll instead; the buttons stay below the scroll, always in reach.
+    let max = (ui.ctx().content_rect().height() - PRINT_CHROME).max(PRINT_MIN_SCROLL);
+    egui::ScrollArea::vertical()
+        .id_salt("print-dialog-scroll")
+        .max_height(max)
+        .min_scrolled_height(max)
+        .show(ui, |ui| print_settings_and_preview(ui, d, t, sizes, &settings, &sheets, thumb));
+    ui.add_space(12.0);
+    let (mut go, mut cancel) = (false, false);
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let looking = still_looking(d);
+        let label = if d.printer.is_some() || looking { tl!("Print") } else { tl!("Save as PDF") };
+        if ui.add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking, |ui| widgets::pill_button(ui, label, true)).inner.clicked() {
+            go = true;
+        }
+        if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
+            cancel = true;
+        }
+    });
+    (go, cancel)
+}
+
+/// What the Print dialog keeps outside its scrolling part: the title, the button row, the
+/// dialog's padding and a margin from the window's edges, in points.
+pub(crate) const PRINT_CHROME: f32 = 150.0;
+/// The scrolling part is never shorter than this, however small the window.
+pub(crate) const PRINT_MIN_SCROLL: f32 = 220.0;
+
+/// The settings column and the preview beside it.
+#[allow(clippy::too_many_arguments)]
+fn print_settings_and_preview(
+    ui: &mut egui::Ui,
+    d: &mut PrintDraft,
+    t: &Tokens,
+    sizes: &[(f64, f64)],
+    settings: &Result<print::Settings, String>,
+    sheets: &[print::Sheet],
+    thumb: &mut dyn FnMut(usize) -> Option<egui::TextureId>,
+) {
     ui.horizontal_top(|ui| {
         // Settings.
         ui.vertical(|ui| {
@@ -532,17 +573,4 @@ pub(crate) fn body(
             }
         });
     });
-    ui.add_space(12.0);
-    let (mut go, mut cancel) = (false, false);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let looking = still_looking(d);
-        let label = if d.printer.is_some() || looking { tl!("Print") } else { tl!("Save as PDF") };
-        if ui.add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking, |ui| widgets::pill_button(ui, label, true)).inner.clicked() {
-            go = true;
-        }
-        if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
-            cancel = true;
-        }
-    });
-    (go, cancel)
 }

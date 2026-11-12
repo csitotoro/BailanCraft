@@ -913,3 +913,31 @@ fn a_booklet_decides_two_sided_itself() {
     assert!(h.query_by_role_and_label(Role::ComboBox, "Two-sided:").is_some());
     assert_eq!(h.state().print_draft.job("x").duplex, Some(Duplex::LongEdge), "back to the choice");
 }
+
+/// BailanCraft: 1920 × 1080 at Windows' 150 % scale leaves a window about 690 points tall. The
+/// settings and preview ran past its bottom and took Print and Cancel with them. They scroll
+/// now, and the buttons stay inside the window.
+#[test]
+fn print_and_cancel_stay_on_a_short_window() {
+    let size = egui::vec2(1280.0, 690.0);
+    let mut h = Harness::builder().with_size(size).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("form.pdf", None, include_bytes!("../data/form.pdf").to_vec()).unwrap();
+        app
+    });
+    h.run_steps(4);
+    assert!(h.state_mut().execute("print.dialog"));
+    h.state_mut().print_draft.printer = None;
+    h.run_steps(6);
+    for label in ["Save as PDF", "Cancel"] {
+        let button = h.get_by_role_and_label(Role::Button, label);
+        let r = button.rect();
+        assert!(r.bottom() <= size.y && r.top() >= 0.0, "{label} at {r:?} is outside a window {size:?} tall");
+    }
+    // The settings further down are still there, a scroll away.
+    h.get_by_label("Comments & Forms".to_uppercase().as_str());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().dialog, None);
+}
