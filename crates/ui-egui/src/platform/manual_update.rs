@@ -160,6 +160,7 @@ impl ManualUpdate {
         self.prompt = Some(prompt);
     }
 
+    #[cfg(test)]
     pub(crate) fn prompt_open(&self) -> bool {
         self.prompt.is_some()
     }
